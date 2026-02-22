@@ -43,10 +43,6 @@ module "iam" {
 module "api_gateway" {
   source = "./modules/api-gateway"
   
-  lambda_people_count_arn    = module.api_gateway.lambda_people_count_arn
-  lambda_sensors_arn         = module.api_gateway.lambda_sensors_arn
-  lambda_bus_position_arn    = module.api_gateway.lambda_bus_position_arn
-  lambda_websocket_arn       = module.api_gateway.lambda_websocket_arn
   lambda_execution_role_arn  = module.iam.lambda_execution_role_arn
   
   timestream_database_name = module.timestream.database_name
@@ -60,8 +56,9 @@ module "api_gateway" {
 module "fargate" {
   source = "./modules/fargate"
   
-  vpc_id             = module.supporting.vpc_id
-  private_subnet_ids = module.supporting.private_subnet_ids
+  vpc_id                    = module.supporting.vpc_id
+  private_subnet_ids        = module.supporting.private_subnet_ids
+  fargate_security_group_id = module.supporting.fargate_security_group_id
   
   timestream_database_name = module.timestream.database_name
   timestream_tables        = module.timestream.table_names
