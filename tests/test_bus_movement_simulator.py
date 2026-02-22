@@ -138,7 +138,7 @@ class TestSimulateBusMovement:
         assert position_data.latitude != initial_lat or position_data.longitude != initial_lon
     
     def test_bus_stops_at_route_end(self, simple_route):
-        """Test that bus position is capped at 1.0 (end of route)."""
+        """Test that bus reaches terminal stop and reverses direction."""
         # Create bus near the end
         bus = BusState(
             bus_id="B001",
@@ -147,19 +147,27 @@ class TestSimulateBusMovement:
             passenger_count=10,
             position_on_route=0.95,
             speed=30.0,
-            at_stop=False
+            at_stop=False,
+            direction=0  # Outbound
         )
         
-        # Move for a long time (should reach end)
-        position_data, _ = simulate_bus_movement(
+        # Move for a long time (should reach terminal and reverse)
+        position_data, stops_reached = simulate_bus_movement(
             bus,
             simple_route,
             timedelta(hours=1)
         )
         
-        # Position should be capped at 1.0
-        assert bus.position_on_route == 1.0
-        assert position_data.distance_to_next_stop == 0.0
+        # Should have reached terminal stop
+        assert len(stops_reached) > 0
+        assert any(stop.is_terminal for stop in stops_reached)
+        
+        # Position should reset to 0.0 for return journey
+        assert bus.position_on_route == 0.0
+        
+        # Direction should have toggled from 0 to 1
+        assert bus.direction == 1
+        assert position_data.direction == 1
     
     def test_no_stops_reached_short_distance(self, bus_at_start, simple_route):
         """Test that no stops are detected for very short movement."""
@@ -505,8 +513,9 @@ class TestEdgeCases:
         assert bus_at_start.position_on_route < 0.01
     
     def test_high_speed_bus(self, bus_at_start, simple_route):
-        """Test with unrealistically high speed."""
+        """Test with unrealistically high speed - should reach terminal and reverse."""
         bus_at_start.speed = 200.0  # 200 km/h
+        bus_at_start.direction = 0  # Start outbound
         
         position_data, stops_reached = simulate_bus_movement(
             bus_at_start,
@@ -514,8 +523,16 @@ class TestEdgeCases:
             timedelta(minutes=5)
         )
         
-        # Should reach end of route
-        assert bus_at_start.position_on_route == 1.0
+        # Should reach terminal stop and reverse direction
+        assert len(stops_reached) > 0
+        assert any(stop.is_terminal for stop in stops_reached)
+        
+        # Position should reset to 0.0 for return journey
+        assert bus_at_start.position_on_route == 0.0
+        
+        # Direction should have toggled
+        assert bus_at_start.direction == 1
+        assert position_data.direction == 1
 
 
 

@@ -19,12 +19,14 @@ def simulate_bus_movement(
 ) -> Tuple[BusPositionDataPoint, List[BusArrival]]:
     """
     Simulate bus movement along route and generate arrivals.
+    Handles bidirectional routes with direction tracking.
     
     This function implements the core bus movement algorithm:
     1. Calculate distance traveled based on speed and time
     2. Update position along route using Route.advance_position
     3. Detect stops reached during movement using Route.get_stops_between
-    4. Return updated position data and list of stops reached
+    4. Handle terminal stops: all passengers alight, direction reverses
+    5. Return updated position data and list of stops reached
     
     Args:
         bus: Current bus state
@@ -55,30 +57,42 @@ def simulate_bus_movement(
     old_position = bus.position_on_route
     
     # Update position along route (capped at 1.0)
-    new_position = route.advance_position(old_position, distance_traveled_meters)
+    new_position = route.advance_position(old_position, distance_traveled_meters, bus.direction)
     
     # Detect stops reached during movement
-    stops_reached = route.get_stops_between(old_position, new_position)
+    stops_reached = route.get_stops_between(old_position, new_position, bus.direction)
     
     # Create arrival events for stops reached (will be populated by caller)
     # This function only detects which stops were reached, not passenger boarding/alighting
     arrivals: List[BusArrival] = []
     
-    # Update bus state
-    bus.position_on_route = new_position
+    # Check if we reached a terminal stop - if so, reverse direction
+    for stop in stops_reached:
+        if stop.is_terminal:
+            # At terminal stop: reverse direction for return route
+            bus.direction = 1 - bus.direction  # Toggle direction (0 -> 1, 1 -> 0)
+            
+            # Reset position to start of route in new direction
+            # When reaching terminal, we're at position 1.0, reset to 0.0 for return
+            bus.position_on_route = 0.0
+            new_position = 0.0
+            break  # Only one terminal stop should be reached at a time
+    else:
+        # No terminal stop reached, update position normally
+        bus.position_on_route = new_position
     
     # Get current coordinates
-    latitude, longitude = route.get_coordinates(new_position)
+    latitude, longitude = route.get_coordinates(bus.position_on_route, bus.direction)
     
     # Get next stop and distance to it
-    next_stop = route.get_next_stop(new_position)
+    next_stop = route.get_next_stop(bus.position_on_route, bus.direction)
     if next_stop:
-        distance_to_next_stop = route.distance_to_stop(new_position, next_stop)
+        distance_to_next_stop = route.distance_to_stop(bus.position_on_route, next_stop, bus.direction)
         next_stop_id = next_stop.stop_id
     else:
         # At the end of the route
         distance_to_next_stop = 0.0
-        next_stop_id = route.stops[-1].stop_id
+        next_stop_id = route.stops[-1].stop_id if bus.direction == 0 else route.stops[0].stop_id
     
     # Create position data point
     position_data = BusPositionDataPoint(
@@ -90,7 +104,8 @@ def simulate_bus_movement(
         passenger_count=bus.passenger_count,
         next_stop_id=next_stop_id,
         distance_to_next_stop=distance_to_next_stop,
-        speed=bus.speed
+        speed=bus.speed,
+        direction=bus.direction
     )
     
     return position_data, stops_reached

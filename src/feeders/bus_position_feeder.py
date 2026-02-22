@@ -308,6 +308,11 @@ class BusPositionFeederService:
                             'Name': 'speed',
                             'Value': str(position_data.speed),
                             'Type': 'DOUBLE'
+                        },
+                        {
+                            'Name': 'direction',
+                            'Value': str(position_data.direction),
+                            'Type': 'BIGINT'
                         }
                     ],
                     'Time': str(timestamp_ms),
@@ -327,7 +332,8 @@ class BusPositionFeederService:
                         passenger_count=position_data.passenger_count,
                         next_stop_id=position_data.next_stop_id,
                         distance_to_next_stop=position_data.distance_to_next_stop,
-                        speed=position_data.speed
+                        speed=position_data.speed,
+                        direction=position_data.direction
                     )
                 except Exception as e:
                     logger.warning(f"Failed to publish position event: {e}")

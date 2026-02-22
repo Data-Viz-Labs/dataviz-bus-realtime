@@ -74,7 +74,8 @@ class EventBridgeClient:
         passenger_count: int,
         next_stop_id: str,
         distance_to_next_stop: float,
-        speed: float
+        speed: float,
+        direction: int = 0
     ) -> bool:
         """
         Publish a bus position update event to EventBridge.
@@ -89,6 +90,7 @@ class EventBridgeClient:
             next_stop_id: Next stop on the route
             distance_to_next_stop: Distance to next stop in meters
             speed: Current speed in km/h
+            direction: Route direction (0 = outbound, 1 = inbound)
         
         Returns:
             True if publish succeeded, False otherwise
@@ -103,7 +105,8 @@ class EventBridgeClient:
                 passenger_count=25,
                 next_stop_id='S002',
                 distance_to_next_stop=500.0,
-                speed=30.0
+                speed=30.0,
+                direction=0
             )
         """
         detail = {
@@ -115,7 +118,8 @@ class EventBridgeClient:
             'passenger_count': passenger_count,
             'next_stop_id': next_stop_id,
             'distance_to_next_stop': distance_to_next_stop,
-            'speed': speed
+            'speed': speed,
+            'direction': direction
         }
         
         return self._publish_event(

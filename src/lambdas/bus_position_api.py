@@ -339,7 +339,8 @@ def format_bus_position_response(row: Dict[str, Any]) -> Dict[str, Any]:
         'passenger_count': int(row.get('passenger_count', 0)) if row.get('passenger_count') else 0,
         'next_stop_id': row.get('next_stop_id'),
         'distance_to_next_stop': float(row.get('distance_to_next_stop', 0)) if row.get('distance_to_next_stop') else None,
-        'speed': float(row.get('speed', 0)) if row.get('speed') else None
+        'speed': float(row.get('speed', 0)) if row.get('speed') else None,
+        'direction': int(row.get('direction', 0)) if row.get('direction') is not None else 0
     }
     
     return response

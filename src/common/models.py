@@ -114,6 +114,7 @@ class BusPositionDataPoint:
         next_stop_id: Next stop on the route
         distance_to_next_stop: Distance to next stop in meters
         speed: Current speed in km/h
+        direction: Route direction (0 = outbound, 1 = inbound/return)
     """
     bus_id: str
     line_id: str
@@ -124,6 +125,7 @@ class BusPositionDataPoint:
     next_stop_id: str
     distance_to_next_stop: float
     speed: float
+    direction: int = 0
     
     def validate(self) -> None:
         """
@@ -148,6 +150,8 @@ class BusPositionDataPoint:
             raise ValueError(f"distance_to_next_stop must be non-negative, got {self.distance_to_next_stop}")
         if self.speed < 0:
             raise ValueError(f"speed must be non-negative, got {self.speed}")
+        if self.direction not in (0, 1):
+            raise ValueError(f"direction must be 0 (outbound) or 1 (inbound), got {self.direction}")
 
 
 # Configuration and State Models
@@ -289,13 +293,14 @@ class Route:
         self._ensure_distances_calculated()
         return self._total_distance
     
-    def advance_position(self, current_position: float, distance_meters: float) -> float:
+    def advance_position(self, current_position: float, distance_meters: float, direction: int = 0) -> float:
         """
         Calculate new position after moving a distance along the route.
         
         Args:
             current_position: Current position (0.0 = start, 1.0 = end)
             distance_meters: Distance to travel in meters
+            direction: Route direction (0 = outbound, 1 = inbound/return)
         
         Returns:
             New position (0.0 to 1.0), capped at 1.0
@@ -305,7 +310,7 @@ class Route:
         # Convert position to absolute distance
         current_distance = current_position * self._total_distance
         
-        # Add the distance traveled
+        # Add the distance traveled (direction doesn't affect distance calculation)
         new_distance = current_distance + distance_meters
         
         # Convert back to normalized position, capped at 1.0
@@ -313,17 +318,24 @@ class Route:
         
         return new_position
     
-    def get_coordinates(self, position: float) -> Tuple[float, float]:
+    def get_coordinates(self, position: float, direction: int = 0) -> Tuple[float, float]:
         """
         Get latitude and longitude for a position on the route.
         
         Args:
             position: Position on route (0.0 = start, 1.0 = end)
+            direction: Route direction (0 = outbound, 1 = inbound/return)
         
         Returns:
             Tuple of (latitude, longitude)
         """
         self._ensure_distances_calculated()
+        
+        # For inbound direction, reverse the stop order conceptually
+        # Position 0.0 in inbound = last stop, position 1.0 = first stop
+        if direction == 1:
+            # Invert position for return route
+            position = 1.0 - position
         
         # Handle edge cases
         if position <= 0.0:
@@ -356,13 +368,14 @@ class Route:
         # Fallback (shouldn't reach here)
         return (self.stops[-1].latitude, self.stops[-1].longitude)
     
-    def get_stops_between(self, start_position: float, end_position: float) -> List[Stop]:
+    def get_stops_between(self, start_position: float, end_position: float, direction: int = 0) -> List[Stop]:
         """
         Get all stops that were passed between two positions.
         
         Args:
             start_position: Starting position (0.0 to 1.0)
             end_position: Ending position (0.0 to 1.0)
+            direction: Route direction (0 = outbound, 1 = inbound/return)
         
         Returns:
             List of stops that were reached (in order)
@@ -389,14 +402,19 @@ class Route:
             if i < len(self._segment_distances):
                 accumulated_distance += self._segment_distances[i]
         
+        # For inbound direction, reverse the order of stops
+        if direction == 1:
+            stops_reached.reverse()
+        
         return stops_reached
     
-    def get_next_stop(self, position: float) -> Optional[Stop]:
+    def get_next_stop(self, position: float, direction: int = 0) -> Optional[Stop]:
         """
         Get the next stop ahead of the current position.
         
         Args:
             position: Current position (0.0 to 1.0)
+            direction: Route direction (0 = outbound, 1 = inbound/return)
         
         Returns:
             Next stop, or None if at the end of the route
@@ -407,27 +425,44 @@ class Route:
         current_distance = position * self._total_distance
         
         accumulated_distance = 0.0
-        for i, stop in enumerate(self.stops):
-            stop_distance = accumulated_distance
-            
-            # Find first stop ahead of current position
-            if stop_distance > current_distance:
-                return stop
-            
-            # Add segment distance for next iteration
-            if i < len(self._segment_distances):
-                accumulated_distance += self._segment_distances[i]
+        
+        if direction == 0:
+            # Outbound: iterate forward through stops
+            for i, stop in enumerate(self.stops):
+                stop_distance = accumulated_distance
+                
+                # Find first stop ahead of current position
+                if stop_distance > current_distance:
+                    return stop
+                
+                # Add segment distance for next iteration
+                if i < len(self._segment_distances):
+                    accumulated_distance += self._segment_distances[i]
+        else:
+            # Inbound: iterate backward through stops
+            # Build reverse accumulated distances
+            for i in range(len(self.stops) - 1, -1, -1):
+                stop_distance = accumulated_distance
+                
+                # Find first stop ahead of current position (in reverse)
+                if stop_distance > current_distance:
+                    return self.stops[i]
+                
+                # Add segment distance for next iteration (going backwards)
+                if i > 0:
+                    accumulated_distance += self._segment_distances[i - 1]
         
         # If we're past all stops, return None
         return None
     
-    def distance_to_stop(self, position: float, stop: Stop) -> float:
+    def distance_to_stop(self, position: float, stop: Stop, direction: int = 0) -> float:
         """
         Calculate distance from current position to a specific stop.
         
         Args:
             position: Current position (0.0 to 1.0)
             stop: Target stop
+            direction: Route direction (0 = outbound, 1 = inbound/return)
         
         Returns:
             Distance in meters, or -1 if stop is not found or behind current position
@@ -443,18 +478,35 @@ class Route:
         # Calculate distance to the stop
         current_distance = position * self._total_distance
         
-        accumulated_distance = 0.0
-        for i in range(stop_index):
-            if i < len(self._segment_distances):
-                accumulated_distance += self._segment_distances[i]
-        
-        stop_distance = accumulated_distance
-        
-        # If stop is behind us, return -1
-        if stop_distance <= current_distance:
-            return -1.0
-        
-        return stop_distance - current_distance
+        if direction == 0:
+            # Outbound: calculate forward distance
+            accumulated_distance = 0.0
+            for i in range(stop_index):
+                if i < len(self._segment_distances):
+                    accumulated_distance += self._segment_distances[i]
+            
+            stop_distance = accumulated_distance
+            
+            # If stop is behind us, return -1
+            if stop_distance <= current_distance:
+                return -1.0
+            
+            return stop_distance - current_distance
+        else:
+            # Inbound: calculate backward distance
+            # For inbound, we need to calculate distance from current position to stop going backwards
+            accumulated_distance = 0.0
+            for i in range(len(self.stops) - 1, stop_index, -1):
+                if i > 0:
+                    accumulated_distance += self._segment_distances[i - 1]
+            
+            stop_distance = accumulated_distance
+            
+            # If stop is behind us (in inbound direction), return -1
+            if stop_distance <= current_distance:
+                return -1.0
+            
+            return stop_distance - current_distance
 
 
 @dataclass
@@ -470,6 +522,7 @@ class BusState:
         position_on_route: Current position (0.0 = start, 1.0 = end)
         speed: Current speed in km/h
         at_stop: Whether the bus is currently at a stop
+        direction: Route direction (0 = outbound, 1 = inbound/return)
     """
     bus_id: str
     line_id: str
@@ -478,6 +531,7 @@ class BusState:
     position_on_route: float = 0.0
     speed: float = 30.0
     at_stop: bool = False
+    direction: int = 0
     
     def validate(self) -> None:
         """
@@ -500,6 +554,8 @@ class BusState:
             raise ValueError(f"position_on_route must be between 0.0 and 1.0, got {self.position_on_route}")
         if self.speed < 0:
             raise ValueError(f"speed must be non-negative, got {self.speed}")
+        if self.direction not in (0, 1):
+            raise ValueError(f"direction must be 0 (outbound) or 1 (inbound), got {self.direction}")
 
 
 @dataclass
