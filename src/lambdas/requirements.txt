@@ -1,0 +1,9 @@
+# Lambda Function Dependencies
+# These dependencies are packaged with the Lambda deployment ZIP
+
+# AWS SDK for Python - used to interact with AWS services
+boto3>=1.34.0
+botocore>=1.34.0
+
+# YAML parser - used for configuration file loading
+pyyaml>=6.0
