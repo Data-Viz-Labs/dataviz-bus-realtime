@@ -1,0 +1,153 @@
+lines:
+  - line_id: "L1"
+    name: "Plaza de Castilla - Atocha"
+    stops:
+      - stop_id: "S001"
+        name: "Plaza de Castilla"
+        latitude: 40.4657
+        longitude: -3.6886
+        is_terminal: true
+        base_arrival_rate: 2.5
+      - stop_id: "S002"
+        name: "Paseo de la Castellana"
+        latitude: 40.4500
+        longitude: -3.6900
+        is_terminal: false
+        base_arrival_rate: 1.8
+      - stop_id: "S003"
+        name: "Nuevos Ministerios"
+        latitude: 40.4469
+        longitude: -3.6926
+        is_terminal: false
+        base_arrival_rate: 2.2
+      - stop_id: "S004"
+        name: "Colón"
+        latitude: 40.4250
+        longitude: -3.6900
+        is_terminal: false
+        base_arrival_rate: 1.5
+      - stop_id: "S005"
+        name: "Cibeles"
+        latitude: 40.4189
+        longitude: -3.6936
+        is_terminal: false
+        base_arrival_rate: 2.0
+      - stop_id: "S006"
+        name: "Banco de España"
+        latitude: 40.4170
+        longitude: -3.6950
+        is_terminal: false
+        base_arrival_rate: 1.7
+      - stop_id: "S007"
+        name: "Atocha"
+        latitude: 40.4068
+        longitude: -3.6920
+        is_terminal: true
+        base_arrival_rate: 3.0
+    buses:
+      - bus_id: "B001"
+        capacity: 80
+        initial_position: 0.0
+      - bus_id: "B002"
+        capacity: 80
+        initial_position: 0.33
+      - bus_id: "B003"
+        capacity: 80
+        initial_position: 0.66
+
+  - line_id: "L2"
+    name: "Moncloa - Puerta del Sol"
+    stops:
+      - stop_id: "S101"
+        name: "Moncloa"
+        latitude: 40.4350
+        longitude: -3.7180
+        is_terminal: true
+        base_arrival_rate: 2.8
+      - stop_id: "S102"
+        name: "Argüelles"
+        latitude: 40.4280
+        longitude: -3.7150
+        is_terminal: false
+        base_arrival_rate: 1.9
+      - stop_id: "S103"
+        name: "Plaza de España"
+        latitude: 40.4240
+        longitude: -3.7120
+        is_terminal: false
+        base_arrival_rate: 2.1
+      - stop_id: "S104"
+        name: "Gran Vía"
+        latitude: 40.4200
+        longitude: -3.7050
+        is_terminal: false
+        base_arrival_rate: 2.5
+      - stop_id: "S105"
+        name: "Callao"
+        latitude: 40.4200
+        longitude: -3.7030
+        is_terminal: false
+        base_arrival_rate: 2.3
+      - stop_id: "S106"
+        name: "Puerta del Sol"
+        latitude: 40.4169
+        longitude: -3.7033
+        is_terminal: true
+        base_arrival_rate: 3.2
+    buses:
+      - bus_id: "B101"
+        capacity: 80
+        initial_position: 0.0
+      - bus_id: "B102"
+        capacity: 80
+        initial_position: 0.25
+      - bus_id: "B103"
+        capacity: 80
+        initial_position: 0.5
+      - bus_id: "B104"
+        capacity: 80
+        initial_position: 0.75
+
+  - line_id: "L3"
+    name: "Retiro - Opera"
+    stops:
+      - stop_id: "S201"
+        name: "Retiro"
+        latitude: 40.4152
+        longitude: -3.6844
+        is_terminal: true
+        base_arrival_rate: 2.0
+      - stop_id: "S202"
+        name: "Alcalá"
+        latitude: 40.4180
+        longitude: -3.6900
+        is_terminal: false
+        base_arrival_rate: 1.6
+      - stop_id: "S203"
+        name: "Sevilla"
+        latitude: 40.4190
+        longitude: -3.6950
+        is_terminal: false
+        base_arrival_rate: 1.8
+      - stop_id: "S204"
+        name: "Sol"
+        latitude: 40.4169
+        longitude: -3.7033
+        is_terminal: false
+        base_arrival_rate: 2.7
+      - stop_id: "S205"
+        name: "Ópera"
+        latitude: 40.4180
+        longitude: -3.7120
+        is_terminal: true
+        base_arrival_rate: 2.4
+    buses:
+      - bus_id: "B201"
+        capacity: 80
+        initial_position: 0.0
+      - bus_id: "B202"
+        capacity: 80
+        initial_position: 0.33
+      - bus_id: "B203"
+        capacity: 80
+        initial_position: 0.66
