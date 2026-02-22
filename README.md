@@ -8,46 +8,88 @@ The Madrid Bus Real-Time Simulator is designed for hackathons and educational pu
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Data Generation Layer                     │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │ People Count │  │   Sensors    │  │ Bus Position │      │
-│  │   Feeder     │  │   Feeder     │  │   Feeder     │      │
-│  │  (Fargate)   │  │  (Fargate)   │  │  (Fargate)   │      │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘      │
-└─────────┼──────────────────┼──────────────────┼─────────────┘
-          │                  │                  │
-          ▼                  ▼                  ▼
-    ┌─────────────────────────────────────────────┐
-    │         AWS Timestream Database             │
-    │  (24h memory + 30d magnetic storage)        │
-    └─────────────────┬───────────────────────────┘
-                      │
-          ┌───────────┴───────────┐
-          ▼                       ▼
-    ┌──────────┐           ┌──────────┐
-    │   REST   │           │WebSocket │
-    │   APIs   │           │   API    │
-    │ (Lambda) │           │ (Lambda) │
-    └────┬─────┘           └────┬─────┘
-         │                      │
-         └──────────┬───────────┘
-                    ▼
-              ┌──────────┐
-              │  Clients │
-              └──────────┘
-```
+### High-Level Overview
+
+![Architecture Diagram](docs/diagrams/architecture.png)
+
+The system follows a producer-consumer pattern with three main layers:
+
+1. **Data Generation Layer (Fargate)**: Three feeder services continuously generate realistic bus operation data
+2. **Event & Storage Layer**: AWS Timestream stores time series data, EventBridge handles real-time events
+3. **API Layer (Lambda + API Gateway)**: REST and WebSocket APIs serve data to clients
+
+### Detailed Architecture
+
+![Detailed Architecture](docs/diagrams/detailed_architecture.png)
+
+**Key Components:**
+
+- **API Gateway**: 
+  - REST API with API key authentication for historical/latest queries
+  - WebSocket API with custom authorizer for real-time updates
+  
+- **Lambda Functions**:
+  - People Count API: Query passenger counts at bus stops
+  - Sensors API: Query temperature, humidity, CO2, door status
+  - Bus Position API: Query bus locations and passenger counts
+  - WebSocket Handler: Manage real-time subscriptions and broadcasts
+  - WebSocket Authorizer: Validate API keys for WebSocket connections
+
+- **Fargate Services**:
+  - People Count Feeder: Generates passenger arrival/departure data
+  - Sensors Feeder: Generates environmental sensor readings
+  - Bus Position Feeder: Simulates bus movement along routes
+
+- **Storage**:
+  - Timestream: Time series database (24h memory + 30d magnetic)
+  - DynamoDB: WebSocket connection tracking
+  - S3: Configuration storage (lines.yaml)
+
+- **Event Processing**:
+  - EventBridge: Routes real-time bus position events to WebSocket clients
+
+### Data Flow
+
+![Data Flow](docs/diagrams/data_flow.png)
+
+**Continuous Data Generation:**
+1. Feeder services generate data every 30-60 seconds
+2. Data is written to Timestream with automatic retention
+3. Bus position updates trigger EventBridge events
+4. Events are broadcast to subscribed WebSocket clients
+
+**API Consumption:**
+- REST APIs: Query latest or historical data with API key authentication
+- WebSocket API: Subscribe to real-time updates for specific bus lines
+- All APIs enforce rate limiting (50 req/sec, 10k req/day per key)
 
 ## Features
 
 - **Real-time bus positions**: Track buses along their routes with GPS coordinates
+- **Bidirectional routes**: Buses travel outbound and return on inbound routes with automatic direction changes at terminals
 - **Passenger counts**: Monitor people waiting at stops and riding on buses
 - **Sensor data**: Temperature, humidity, CO2 levels, and door status
 - **Historical queries**: Access up to 30 days of historical data
 - **WebSocket streaming**: Real-time position updates for subscribed bus lines
 - **Daily patterns**: Realistic passenger flow based on time of day
 - **Temporal consistency**: Coordinated updates across all data types
+
+### Bidirectional Route System
+
+![Bidirectional Route](docs/diagrams/bidirectional_route.png)
+
+The simulator implements realistic bidirectional bus routes:
+
+- **Outbound (Direction = 0)**: Buses travel from first stop to last stop
+- **Terminal Stop Behavior**: When reaching a terminal stop:
+  - All passengers alight (get off)
+  - New passengers board
+  - Direction toggles (0 → 1 or 1 → 0)
+  - Position resets to 0.0 for return journey
+- **Inbound (Direction = 1)**: Buses travel the return route back to origin
+- **Direction Consistency**: Direction value remains constant between terminal stops
+
+This ensures realistic bus operations where buses complete round trips on their routes.
 
 ## Prerequisites
 
