@@ -24,6 +24,12 @@ variable "dynamodb_table_name" {
   type        = string
 }
 
+variable "participant_count" {
+  description = "Number of API keys to generate for hackathon participants"
+  type        = number
+  default     = 50
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

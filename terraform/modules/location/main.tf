@@ -12,7 +12,7 @@ resource "aws_location_route_calculator" "bus_routes" {
 
 # Map resource for Madrid Centro
 resource "aws_location_map" "madrid_centro" {
-  map_name = "madrid-centro-map"
+  map_name    = "madrid-centro-map"
   description = "Map for Madrid Centro bus routes"
 
   configuration {

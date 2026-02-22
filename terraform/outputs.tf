@@ -12,14 +12,36 @@ output "timestream_table_names" {
 }
 
 # API Gateway outputs
-output "api_gateway_http_endpoint" {
-  description = "HTTP API Gateway endpoint URL"
-  value       = module.api_gateway.http_api_endpoint
+output "api_gateway_rest_endpoint" {
+  description = "REST API Gateway endpoint URL"
+  value       = module.api_gateway.rest_api_endpoint
+}
+
+output "api_gateway_rest_api_id" {
+  description = "REST API Gateway ID"
+  value       = module.api_gateway.rest_api_id
 }
 
 output "api_gateway_websocket_endpoint" {
   description = "WebSocket API Gateway endpoint URL"
   value       = module.api_gateway.websocket_api_endpoint
+}
+
+output "api_keys" {
+  description = "List of API key IDs for hackathon participants"
+  value       = module.api_gateway.api_keys
+  sensitive   = true
+}
+
+output "api_key_values" {
+  description = "List of API key values for hackathon participants (use for distribution)"
+  value       = module.api_gateway.api_key_values
+  sensitive   = true
+}
+
+output "usage_plan_id" {
+  description = "Usage plan ID for hackathon participants"
+  value       = module.api_gateway.usage_plan_id
 }
 
 # Fargate outputs

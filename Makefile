@@ -1,4 +1,4 @@
-.PHONY: init plan deploy destroy build-feeders push-images load-config package-lambda package-all-lambdas help
+.PHONY: init plan deploy destroy build-feeders push-images load-config package-lambda package-all-lambdas export-keys verify help
 
 AWS_REGION ?= eu-west-1
 AWS_ACCOUNT_ID := $(shell aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "unknown")
@@ -15,12 +15,17 @@ help:
 	@echo "  build-feeders      - Build Docker images for feeder services"
 	@echo "  push-images        - Push Docker images to ECR"
 	@echo "  load-config        - Load configuration data to S3"
+	@echo "  export-keys        - Export API keys for hackathon participants"
+	@echo "  verify             - Run pre-hackathon verification checks"
 	@echo "  deploy             - Full deployment (build, push, apply, config)"
 	@echo "  destroy            - Destroy all infrastructure"
 	@echo ""
 	@echo "Environment variables:"
 	@echo "  AWS_REGION    - AWS region (default: eu-west-1)"
 	@echo "  LAMBDA        - Lambda function name for package-lambda target"
+	@echo "  OUTPUT         - Output file for export-keys (default: api_keys.txt)"
+	@echo "  FORMAT         - Output format for export-keys: text or json (default: text)"
+	@echo "  VERBOSE        - Enable verbose output for verify (default: false)"
 
 init:
 	cd terraform && terraform init
@@ -49,6 +54,13 @@ load-config:
 	@echo "Loading configuration data..."
 	python scripts/load_config.py --file data/lines.yaml --region $(AWS_REGION)
 
+export-keys:
+	@echo "Exporting API keys for hackathon participants..."
+	@OUTPUT_FILE=$${OUTPUT:-api_keys.txt}; \
+	FORMAT=$${FORMAT:-text}; \
+	python scripts/export_api_keys.py --region $(AWS_REGION) --output $$OUTPUT_FILE --format $$FORMAT
+	@echo "API keys exported successfully!"
+
 package-lambda:
 	@if [ -z "$(LAMBDA)" ]; then \
 		echo "Error: LAMBDA variable not set. Usage: make package-lambda LAMBDA=people_count_api"; \
@@ -63,13 +75,22 @@ package-all-lambdas:
 	./scripts/package_lambda.sh sensors_api
 	./scripts/package_lambda.sh bus_position_api
 	./scripts/package_lambda.sh websocket_handler
+	./scripts/package_lambda.sh websocket_authorizer
 	@echo "All Lambda functions packaged successfully!"
 
-deploy: push-images init
+deploy: package-all-lambdas push-images init
 	@echo "Deploying infrastructure..."
 	cd terraform && terraform apply -var="aws_region=$(AWS_REGION)" -auto-approve
 	$(MAKE) load-config
 	@echo "Deployment complete!"
+
+verify:
+	@echo "Running pre-hackathon verification checks..."
+	@if [ "$(VERBOSE)" = "true" ]; then \
+		python scripts/verify_deployment.py --region $(AWS_REGION) --verbose; \
+	else \
+		python scripts/verify_deployment.py --region $(AWS_REGION); \
+	fi
 
 destroy:
 	@echo "Destroying infrastructure..."

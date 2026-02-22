@@ -1,13 +1,30 @@
 # Outputs for API Gateway module
 
-output "http_api_endpoint" {
-  description = "HTTP API Gateway endpoint URL"
-  value       = aws_apigatewayv2_stage.http.invoke_url
+output "rest_api_endpoint" {
+  description = "REST API Gateway endpoint URL"
+  value       = aws_api_gateway_stage.prod.invoke_url
 }
 
-output "http_api_id" {
-  description = "HTTP API Gateway ID"
-  value       = aws_apigatewayv2_api.http.id
+output "rest_api_id" {
+  description = "REST API Gateway ID"
+  value       = aws_api_gateway_rest_api.main.id
+}
+
+output "api_keys" {
+  description = "List of API key IDs for hackathon participants"
+  value       = aws_api_gateway_api_key.participant_keys[*].id
+  sensitive   = true
+}
+
+output "api_key_values" {
+  description = "List of API key values for hackathon participants"
+  value       = aws_api_gateway_api_key.participant_keys[*].value
+  sensitive   = true
+}
+
+output "usage_plan_id" {
+  description = "Usage plan ID for hackathon participants"
+  value       = aws_api_gateway_usage_plan.hackathon.id
 }
 
 output "websocket_api_endpoint" {

@@ -12,6 +12,12 @@ variable "timestream_database_name" {
   default     = "bus_simulator"
 }
 
+variable "participant_count" {
+  description = "Number of API keys to generate for hackathon participants"
+  type        = number
+  default     = 50
+}
+
 variable "create_vpc" {
   description = "Whether to create a new VPC or use existing"
   type        = bool

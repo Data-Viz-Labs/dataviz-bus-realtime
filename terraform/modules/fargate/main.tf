@@ -29,11 +29,11 @@ resource "aws_ecs_cluster" "bus_simulator" {
 resource "aws_ecs_task_definition" "people_count_feeder" {
   family                   = "people-count-feeder"
   requires_compatibilities = ["FARGATE"]
-  network_mode            = "awsvpc"
-  cpu                     = "256"
-  memory                  = "512"
-  execution_role_arn      = var.ecs_execution_role_arn
-  task_role_arn           = var.ecs_task_role_arn
+  network_mode             = "awsvpc"
+  cpu                      = "256"
+  memory                   = "512"
+  execution_role_arn       = var.ecs_execution_role_arn
+  task_role_arn            = var.ecs_task_role_arn
 
   container_definitions = jsonencode([{
     name  = "people-count-feeder"
@@ -83,11 +83,11 @@ resource "aws_ecs_task_definition" "people_count_feeder" {
 resource "aws_ecs_task_definition" "sensors_feeder" {
   family                   = "sensors-feeder"
   requires_compatibilities = ["FARGATE"]
-  network_mode            = "awsvpc"
-  cpu                     = "256"
-  memory                  = "512"
-  execution_role_arn      = var.ecs_execution_role_arn
-  task_role_arn           = var.ecs_task_role_arn
+  network_mode             = "awsvpc"
+  cpu                      = "256"
+  memory                   = "512"
+  execution_role_arn       = var.ecs_execution_role_arn
+  task_role_arn            = var.ecs_task_role_arn
 
   container_definitions = jsonencode([{
     name  = "sensors-feeder"
@@ -137,11 +137,11 @@ resource "aws_ecs_task_definition" "sensors_feeder" {
 resource "aws_ecs_task_definition" "bus_position_feeder" {
   family                   = "bus-position-feeder"
   requires_compatibilities = ["FARGATE"]
-  network_mode            = "awsvpc"
-  cpu                     = "256"
-  memory                  = "512"
-  execution_role_arn      = var.ecs_execution_role_arn
-  task_role_arn           = var.ecs_task_role_arn
+  network_mode             = "awsvpc"
+  cpu                      = "256"
+  memory                   = "512"
+  execution_role_arn       = var.ecs_execution_role_arn
+  task_role_arn            = var.ecs_task_role_arn
 
   container_definitions = jsonencode([{
     name  = "bus-position-feeder"
