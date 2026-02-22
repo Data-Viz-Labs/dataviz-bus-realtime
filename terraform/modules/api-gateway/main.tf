@@ -108,8 +108,20 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_method.sensors.id,
       aws_api_gateway_method.bus_position.id,
       aws_api_gateway_method.bus_position_line.id,
+      aws_api_gateway_integration.people_count.id,
+      aws_api_gateway_integration.sensors.id,
+      aws_api_gateway_integration.bus_position.id,
+      aws_api_gateway_integration.bus_position_line.id,
     ]))
   }
+
+  # Ensure all integrations are created before deployment
+  depends_on = [
+    aws_api_gateway_integration.people_count,
+    aws_api_gateway_integration.sensors,
+    aws_api_gateway_integration.bus_position,
+    aws_api_gateway_integration.bus_position_line,
+  ]
 
   lifecycle {
     create_before_destroy = true

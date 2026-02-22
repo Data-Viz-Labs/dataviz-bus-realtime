@@ -38,7 +38,13 @@ resource "aws_iam_role_policy" "lambda_timestream_read" {
       {
         Effect = "Allow"
         Action = [
-          "timestream:DescribeEndpoints",
+          "timestream:DescribeEndpoints"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "timestream:Select",
           "timestream:DescribeTable",
           "timestream:ListMeasures"
@@ -126,7 +132,13 @@ resource "aws_iam_role_policy" "ecs_timestream_write" {
       {
         Effect = "Allow"
         Action = [
-          "timestream:DescribeEndpoints",
+          "timestream:DescribeEndpoints"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "timestream:WriteRecords"
         ]
         Resource = concat(
