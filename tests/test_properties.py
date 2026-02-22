@@ -7,8 +7,14 @@ across randomized inputs, ensuring correctness at scale.
 
 import pytest
 import math
+import sys
+import os
 from datetime import datetime, timedelta
 from hypothesis import given, settings, strategies as st
+
+# Add src directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
 from src.common.models import (
     PeopleCountDataPoint,
     BusPositionDataPoint,
@@ -3771,3 +3777,522 @@ class TestProperty6InvalidEntityErrorHandling:
             "Response should indicate an error"
         assert 'entity_type' in body['message'].lower(), \
             "Error message should mention entity_type"
+
+
+# ============================================================================
+# API CORRECTNESS PROPERTIES
+# ============================================================================
+
+class TestProperty7LatestBusPositionQueryCorrectness:
+    """
+    Property 7: Latest bus position query correctness
+    
+    **Validates: Requirements 3.3**
+    
+    For any valid bus ID, querying the bus position API with mode=latest should return
+    the most recent position data from Timestream, with all fields (latitude, longitude,
+    passenger count, etc.) matching the stored data.
+    """
+    
+    @settings(max_examples=100)
+    @given(
+        bus_id=entity_ids,
+        line_id=entity_ids,
+        latitude=st.floats(min_value=40.3, max_value=40.5, allow_nan=False, allow_infinity=False),
+        longitude=st.floats(min_value=-3.8, max_value=-3.6, allow_nan=False, allow_infinity=False),
+        passenger_count=passenger_counts,
+        next_stop_id=entity_ids,
+        distance=st.floats(min_value=0.0, max_value=5000.0, allow_nan=False, allow_infinity=False),
+        speed=st.floats(min_value=0.0, max_value=80.0, allow_nan=False, allow_infinity=False)
+    )
+    def test_latest_query_returns_most_recent_data(
+        self, bus_id, line_id, latitude, longitude, passenger_count,
+        next_stop_id, distance, speed
+    ):
+        """
+        Test that latest query returns the most recent bus position data.
+        
+        For any valid bus ID, when querying with mode=latest, the API should return
+        the most recent data point from Timestream with all fields matching.
+        """
+        from unittest.mock import Mock, patch
+        from lambdas.bus_position_api import query_latest_bus_position
+        
+        # Create mock Timestream response with the most recent data
+        mock_row = {
+            'bus_id': bus_id,
+            'line_id': line_id,
+            'time': '2024-01-15T10:30:00Z',
+            'latitude': str(latitude),
+            'longitude': str(longitude),
+            'passenger_count': str(passenger_count),
+            'next_stop_id': next_stop_id,
+            'distance_to_next_stop': str(distance),
+            'speed': str(speed)
+        }
+        
+        mock_client = Mock()
+        mock_client.query_latest.return_value = {
+            'rows': [mock_row]
+        }
+        
+        # Patch the Timestream client
+        with patch('lambdas.bus_position_api.get_timestream_client', return_value=mock_client):
+            result = query_latest_bus_position(bus_id)
+        
+        # Verify the result matches the stored data
+        assert result is not None, f"Query should return data for bus {bus_id}"
+        assert result['bus_id'] == bus_id, "Bus ID should match"
+        assert result['line_id'] == line_id, "Line ID should match"
+        assert result['latitude'] == latitude, "Latitude should match"
+        assert result['longitude'] == longitude, "Longitude should match"
+        assert result['passenger_count'] == passenger_count, "Passenger count should match"
+        assert result['next_stop_id'] == next_stop_id, "Next stop ID should match"
+        assert result['distance_to_next_stop'] == distance, "Distance should match"
+        assert result['speed'] == speed, "Speed should match"
+        
+        # Verify the query was called with correct parameters
+        mock_client.query_latest.assert_called_once_with(
+            table_name='bus_position',
+            dimensions={'bus_id': bus_id},
+            limit=1
+        )
+    
+    @settings(max_examples=100)
+    @given(
+        bus_id=entity_ids,
+        line_id=entity_ids,
+        num_data_points=st.integers(min_value=2, max_value=10)
+    )
+    def test_latest_query_returns_newest_among_multiple(
+        self, bus_id, line_id, num_data_points
+    ):
+        """
+        Test that latest query returns the newest data point when multiple exist.
+        
+        When multiple data points exist for a bus, the latest query should return
+        only the most recent one (highest timestamp).
+        """
+        from unittest.mock import Mock, patch
+        from lambdas.bus_position_api import query_latest_bus_position
+        from datetime import datetime, timedelta
+        
+        # Create multiple data points with different timestamps
+        base_time = datetime(2024, 1, 15, 10, 0, 0)
+        
+        # The most recent data point (should be returned)
+        most_recent_time = base_time + timedelta(minutes=num_data_points - 1)
+        most_recent_row = {
+            'bus_id': bus_id,
+            'line_id': line_id,
+            'time': most_recent_time.isoformat() + 'Z',
+            'latitude': '40.4165',
+            'longitude': '-3.7026',
+            'passenger_count': '25',
+            'next_stop_id': 'S003',
+            'distance_to_next_stop': '450.5',
+            'speed': '35.2'
+        }
+        
+        mock_client = Mock()
+        mock_client.query_latest.return_value = {
+            'rows': [most_recent_row]  # Timestream returns only the latest
+        }
+        
+        with patch('lambdas.bus_position_api.get_timestream_client', return_value=mock_client):
+            result = query_latest_bus_position(bus_id)
+        
+        # Verify we got the most recent data
+        assert result is not None
+        assert result['bus_id'] == bus_id
+        assert result['timestamp'] == most_recent_time.isoformat() + 'Z'
+        assert result['passenger_count'] == 25
+    
+    @settings(max_examples=50)
+    @given(
+        bus_id=entity_ids
+    )
+    def test_latest_query_returns_none_for_nonexistent_bus(self, bus_id):
+        """
+        Test that latest query returns None when no data exists for the bus.
+        
+        For any bus ID that has no data in Timestream, the query should return None.
+        """
+        from unittest.mock import Mock, patch
+        from lambdas.bus_position_api import query_latest_bus_position
+        
+        # Mock empty response
+        mock_client = Mock()
+        mock_client.query_latest.return_value = None
+        
+        with patch('lambdas.bus_position_api.get_timestream_client', return_value=mock_client):
+            result = query_latest_bus_position(bus_id)
+        
+        # Should return None for nonexistent bus
+        assert result is None, f"Query should return None for nonexistent bus {bus_id}"
+    
+    @settings(max_examples=100)
+    @given(
+        bus_id=entity_ids,
+        line_id=entity_ids,
+        passenger_count=passenger_counts
+    )
+    def test_latest_query_all_fields_present(
+        self, bus_id, line_id, passenger_count
+    ):
+        """
+        Test that latest query returns all required fields.
+        
+        The response should include: bus_id, line_id, timestamp, latitude, longitude,
+        passenger_count, next_stop_id, distance_to_next_stop, speed.
+        """
+        from unittest.mock import Mock, patch
+        from lambdas.bus_position_api import query_latest_bus_position
+        
+        mock_row = {
+            'bus_id': bus_id,
+            'line_id': line_id,
+            'time': '2024-01-15T10:30:00Z',
+            'latitude': '40.4165',
+            'longitude': '-3.7026',
+            'passenger_count': str(passenger_count),
+            'next_stop_id': 'S003',
+            'distance_to_next_stop': '450.5',
+            'speed': '35.2'
+        }
+        
+        mock_client = Mock()
+        mock_client.query_latest.return_value = {'rows': [mock_row]}
+        
+        with patch('lambdas.bus_position_api.get_timestream_client', return_value=mock_client):
+            result = query_latest_bus_position(bus_id)
+        
+        # Verify all required fields are present
+        required_fields = [
+            'bus_id', 'line_id', 'timestamp', 'latitude', 'longitude',
+            'passenger_count', 'next_stop_id', 'distance_to_next_stop', 'speed'
+        ]
+        
+        for field in required_fields:
+            assert field in result, f"Field '{field}' should be present in response"
+            assert result[field] is not None, f"Field '{field}' should not be None"
+
+
+class TestProperty8HistoricalBusPositionQueryCorrectness:
+    """
+    Property 8: Historical bus position query correctness
+    
+    **Validates: Requirements 3.4**
+    
+    For any valid bus ID and any timestamp in the past, querying the bus position API
+    with that timestamp should return the position data with the largest timestamp
+    less than or equal to the query timestamp.
+    """
+    
+    @settings(max_examples=100)
+    @given(
+        bus_id=entity_ids,
+        line_id=entity_ids,
+        query_timestamp=timestamps,
+        latitude=st.floats(min_value=40.3, max_value=40.5, allow_nan=False, allow_infinity=False),
+        longitude=st.floats(min_value=-3.8, max_value=-3.6, allow_nan=False, allow_infinity=False),
+        passenger_count=passenger_counts,
+        next_stop_id=entity_ids,
+        distance=st.floats(min_value=0.0, max_value=5000.0, allow_nan=False, allow_infinity=False),
+        speed=st.floats(min_value=0.0, max_value=80.0, allow_nan=False, allow_infinity=False)
+    )
+    def test_historical_query_returns_data_at_or_before_timestamp(
+        self, bus_id, line_id, query_timestamp, latitude, longitude,
+        passenger_count, next_stop_id, distance, speed
+    ):
+        """
+        Test that historical query returns data at or before the specified timestamp.
+        
+        For any valid bus ID and timestamp, the API should return the most recent
+        data point with timestamp <= query_timestamp.
+        """
+        from unittest.mock import Mock, patch
+        from lambdas.bus_position_api import query_bus_position_at_time
+        from datetime import timedelta
+        
+        # Create a data point slightly before the query timestamp
+        data_timestamp = query_timestamp - timedelta(minutes=5)
+        
+        mock_row = {
+            'bus_id': bus_id,
+            'line_id': line_id,
+            'time': data_timestamp.isoformat() + 'Z',
+            'latitude': str(latitude),
+            'longitude': str(longitude),
+            'passenger_count': str(passenger_count),
+            'next_stop_id': next_stop_id,
+            'distance_to_next_stop': str(distance),
+            'speed': str(speed)
+        }
+        
+        mock_client = Mock()
+        mock_client.query_at_time.return_value = {
+            'rows': [mock_row]
+        }
+        
+        with patch('lambdas.bus_position_api.get_timestream_client', return_value=mock_client):
+            result = query_bus_position_at_time(bus_id, query_timestamp)
+        
+        # Verify the result matches the stored data
+        assert result is not None, f"Query should return data for bus {bus_id}"
+        assert result['bus_id'] == bus_id
+        assert result['line_id'] == line_id
+        assert result['latitude'] == latitude
+        assert result['longitude'] == longitude
+        assert result['passenger_count'] == passenger_count
+        assert result['next_stop_id'] == next_stop_id
+        assert result['distance_to_next_stop'] == distance
+        assert result['speed'] == speed
+        
+        # Verify the query was called with correct parameters
+        mock_client.query_at_time.assert_called_once_with(
+            table_name='bus_position',
+            dimensions={'bus_id': bus_id},
+            timestamp=query_timestamp,
+            limit=1
+        )
+    
+    @settings(max_examples=100)
+    @given(
+        bus_id=entity_ids,
+        line_id=entity_ids,
+        base_timestamp=timestamps
+    )
+    def test_historical_query_returns_closest_before_timestamp(
+        self, bus_id, line_id, base_timestamp
+    ):
+        """
+        Test that historical query returns the closest data point before the timestamp.
+        
+        When multiple data points exist before the query timestamp, the query should
+        return the one with the largest timestamp that is still <= query_timestamp.
+        """
+        from unittest.mock import Mock, patch
+        from lambdas.bus_position_api import query_bus_position_at_time
+        from datetime import timedelta
+        
+        # Query timestamp
+        query_time = base_timestamp
+        
+        # The closest data point before query time (should be returned)
+        closest_time = query_time - timedelta(minutes=2)
+        closest_row = {
+            'bus_id': bus_id,
+            'line_id': line_id,
+            'time': closest_time.isoformat() + 'Z',
+            'latitude': '40.4165',
+            'longitude': '-3.7026',
+            'passenger_count': '25',
+            'next_stop_id': 'S003',
+            'distance_to_next_stop': '450.5',
+            'speed': '35.2'
+        }
+        
+        mock_client = Mock()
+        mock_client.query_at_time.return_value = {
+            'rows': [closest_row]  # Timestream returns the closest before
+        }
+        
+        with patch('lambdas.bus_position_api.get_timestream_client', return_value=mock_client):
+            result = query_bus_position_at_time(bus_id, query_time)
+        
+        # Verify we got the closest data point
+        assert result is not None
+        assert result['bus_id'] == bus_id
+        assert result['timestamp'] == closest_time.isoformat() + 'Z'
+        
+        # Verify the returned timestamp is before or equal to query timestamp
+        from datetime import datetime
+        returned_time = datetime.fromisoformat(result['timestamp'].replace('Z', '+00:00'))
+        # Make query_time timezone-aware for comparison
+        if query_time.tzinfo is None:
+            from datetime import timezone
+            query_time = query_time.replace(tzinfo=timezone.utc)
+        assert returned_time <= query_time, \
+            f"Returned timestamp ({returned_time}) should be <= query timestamp ({query_time})"
+    
+    @settings(max_examples=50)
+    @given(
+        bus_id=entity_ids,
+        query_timestamp=timestamps
+    )
+    def test_historical_query_returns_none_when_no_data_before_timestamp(
+        self, bus_id, query_timestamp
+    ):
+        """
+        Test that historical query returns None when no data exists before the timestamp.
+        
+        If the query timestamp is before all data points for the bus, the query
+        should return None.
+        """
+        from unittest.mock import Mock, patch
+        from lambdas.bus_position_api import query_bus_position_at_time
+        
+        # Mock empty response (no data before timestamp)
+        mock_client = Mock()
+        mock_client.query_at_time.return_value = None
+        
+        with patch('lambdas.bus_position_api.get_timestream_client', return_value=mock_client):
+            result = query_bus_position_at_time(bus_id, query_timestamp)
+        
+        # Should return None when no data exists before timestamp
+        assert result is None, \
+            f"Query should return None when no data exists before timestamp for bus {bus_id}"
+    
+    @settings(max_examples=100)
+    @given(
+        bus_id=entity_ids,
+        line_id=entity_ids,
+        query_timestamp=timestamps,
+        passenger_count=passenger_counts
+    )
+    def test_historical_query_all_fields_present(
+        self, bus_id, line_id, query_timestamp, passenger_count
+    ):
+        """
+        Test that historical query returns all required fields.
+        
+        The response should include all fields: bus_id, line_id, timestamp, latitude,
+        longitude, passenger_count, next_stop_id, distance_to_next_stop, speed.
+        """
+        from unittest.mock import Mock, patch
+        from lambdas.bus_position_api import query_bus_position_at_time
+        from datetime import timedelta
+        
+        data_timestamp = query_timestamp - timedelta(minutes=5)
+        
+        mock_row = {
+            'bus_id': bus_id,
+            'line_id': line_id,
+            'time': data_timestamp.isoformat() + 'Z',
+            'latitude': '40.4165',
+            'longitude': '-3.7026',
+            'passenger_count': str(passenger_count),
+            'next_stop_id': 'S003',
+            'distance_to_next_stop': '450.5',
+            'speed': '35.2'
+        }
+        
+        mock_client = Mock()
+        mock_client.query_at_time.return_value = {'rows': [mock_row]}
+        
+        with patch('lambdas.bus_position_api.get_timestream_client', return_value=mock_client):
+            result = query_bus_position_at_time(bus_id, query_timestamp)
+        
+        # Verify all required fields are present
+        required_fields = [
+            'bus_id', 'line_id', 'timestamp', 'latitude', 'longitude',
+            'passenger_count', 'next_stop_id', 'distance_to_next_stop', 'speed'
+        ]
+        
+        for field in required_fields:
+            assert field in result, f"Field '{field}' should be present in response"
+            assert result[field] is not None, f"Field '{field}' should not be None"
+    
+    @settings(max_examples=50)
+    @given(
+        bus_id=entity_ids,
+        line_id=entity_ids,
+        base_timestamp=timestamps,
+        time_offset_minutes=st.integers(min_value=1, max_value=60)
+    )
+    def test_historical_query_exact_timestamp_match(
+        self, bus_id, line_id, base_timestamp, time_offset_minutes
+    ):
+        """
+        Test that historical query works correctly when timestamp exactly matches data.
+        
+        When the query timestamp exactly matches a data point timestamp, that data
+        point should be returned.
+        """
+        from unittest.mock import Mock, patch
+        from lambdas.bus_position_api import query_bus_position_at_time
+        from datetime import timedelta
+        
+        # Create data point with exact timestamp
+        exact_timestamp = base_timestamp - timedelta(minutes=time_offset_minutes)
+        
+        mock_row = {
+            'bus_id': bus_id,
+            'line_id': line_id,
+            'time': exact_timestamp.isoformat() + 'Z',
+            'latitude': '40.4165',
+            'longitude': '-3.7026',
+            'passenger_count': '25',
+            'next_stop_id': 'S003',
+            'distance_to_next_stop': '450.5',
+            'speed': '35.2'
+        }
+        
+        mock_client = Mock()
+        mock_client.query_at_time.return_value = {'rows': [mock_row]}
+        
+        # Query with the exact same timestamp
+        with patch('lambdas.bus_position_api.get_timestream_client', return_value=mock_client):
+            result = query_bus_position_at_time(bus_id, exact_timestamp)
+        
+        # Should return the data point with exact timestamp
+        assert result is not None
+        assert result['bus_id'] == bus_id
+        assert result['timestamp'] == exact_timestamp.isoformat() + 'Z'
+    
+    @settings(max_examples=100)
+    @given(
+        bus_id=entity_ids,
+        line_id=entity_ids,
+        base_timestamp=timestamps,
+        num_intervals=st.integers(min_value=3, max_value=10)
+    )
+    def test_historical_query_with_multiple_data_points(
+        self, bus_id, line_id, base_timestamp, num_intervals
+    ):
+        """
+        Test historical query behavior with multiple data points at different times.
+        
+        When multiple data points exist, the query should return the one with the
+        largest timestamp that is still <= query_timestamp.
+        """
+        from unittest.mock import Mock, patch
+        from lambdas.bus_position_api import query_bus_position_at_time
+        from datetime import timedelta
+        
+        # Query at a specific time
+        query_time = base_timestamp
+        
+        # Create the data point that should be returned (most recent before query)
+        target_time = query_time - timedelta(minutes=5)
+        target_row = {
+            'bus_id': bus_id,
+            'line_id': line_id,
+            'time': target_time.isoformat() + 'Z',
+            'latitude': '40.4165',
+            'longitude': '-3.7026',
+            'passenger_count': '30',
+            'next_stop_id': 'S003',
+            'distance_to_next_stop': '450.5',
+            'speed': '35.2'
+        }
+        
+        mock_client = Mock()
+        mock_client.query_at_time.return_value = {'rows': [target_row]}
+        
+        with patch('lambdas.bus_position_api.get_timestream_client', return_value=mock_client):
+            result = query_bus_position_at_time(bus_id, query_time)
+        
+        # Verify we got the correct data point
+        assert result is not None
+        assert result['bus_id'] == bus_id
+        assert result['passenger_count'] == 30
+        
+        # Verify timestamp is before query time
+        from datetime import datetime, timezone
+        returned_time = datetime.fromisoformat(result['timestamp'].replace('Z', '+00:00'))
+        # Make query_time timezone-aware for comparison
+        if query_time.tzinfo is None:
+            query_time = query_time.replace(tzinfo=timezone.utc)
+        assert returned_time <= query_time

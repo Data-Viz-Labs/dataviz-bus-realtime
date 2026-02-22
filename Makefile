@@ -29,21 +29,21 @@ plan: init
 	cd terraform && terraform plan -var="aws_region=$(AWS_REGION)"
 
 build-feeders:
-	@echo "Building Docker images..."
-	docker build -t bus-simulator-people-count:latest -f docker/Dockerfile.people_count .
-	docker build -t bus-simulator-sensors:latest -f docker/Dockerfile.sensors .
-	docker build -t bus-simulator-bus-position:latest -f docker/Dockerfile.bus_position .
+	@echo "Building container images with Podman..."
+	podman build -t bus-simulator-people-count:latest -f docker/Dockerfile.people_count .
+	podman build -t bus-simulator-sensors:latest -f docker/Dockerfile.sensors .
+	podman build -t bus-simulator-bus-position:latest -f docker/Dockerfile.bus_position .
 
 push-images: build-feeders
 	@echo "Logging in to ECR..."
-	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(ECR_REGISTRY)
+	aws ecr get-login-password --region $(AWS_REGION) | podman login --username AWS --password-stdin $(ECR_REGISTRY)
 	@echo "Tagging and pushing images..."
-	docker tag bus-simulator-people-count:latest $(ECR_REGISTRY)/bus-simulator-feeders:people-count-latest
-	docker tag bus-simulator-sensors:latest $(ECR_REGISTRY)/bus-simulator-feeders:sensors-latest
-	docker tag bus-simulator-bus-position:latest $(ECR_REGISTRY)/bus-simulator-feeders:bus-position-latest
-	docker push $(ECR_REGISTRY)/bus-simulator-feeders:people-count-latest
-	docker push $(ECR_REGISTRY)/bus-simulator-feeders:sensors-latest
-	docker push $(ECR_REGISTRY)/bus-simulator-feeders:bus-position-latest
+	podman tag bus-simulator-people-count:latest $(ECR_REGISTRY)/bus-simulator-feeders:people-count-latest
+	podman tag bus-simulator-sensors:latest $(ECR_REGISTRY)/bus-simulator-feeders:sensors-latest
+	podman tag bus-simulator-bus-position:latest $(ECR_REGISTRY)/bus-simulator-feeders:bus-position-latest
+	podman push $(ECR_REGISTRY)/bus-simulator-feeders:people-count-latest
+	podman push $(ECR_REGISTRY)/bus-simulator-feeders:sensors-latest
+	podman push $(ECR_REGISTRY)/bus-simulator-feeders:bus-position-latest
 
 load-config:
 	@echo "Loading configuration data..."
@@ -61,6 +61,8 @@ package-all-lambdas:
 	@echo "Packaging all Lambda functions..."
 	./scripts/package_lambda.sh people_count_api
 	./scripts/package_lambda.sh sensors_api
+	./scripts/package_lambda.sh bus_position_api
+	./scripts/package_lambda.sh websocket_handler
 	@echo "All Lambda functions packaged successfully!"
 
 deploy: push-images init
