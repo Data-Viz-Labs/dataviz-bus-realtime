@@ -276,8 +276,9 @@ class TestQueryFunctions:
         assert result['entity_type'] == 'stop'
         assert result['temperature'] == 20.0
         assert result['humidity'] == 50.0
-        assert result['co2_level'] is None
-        assert result['door_status'] is None
+        # Stop sensor data should not have bus-specific fields
+        assert 'co2_level' not in result
+        assert 'door_status' not in result
         mock_client.query_latest.assert_called_once_with(
             table_name='sensor_data',
             dimensions={'entity_id': 'S001', 'entity_type': 'stop'},
@@ -401,8 +402,9 @@ class TestFormatResponse:
         assert result['timestamp'] == '2024-01-15T10:30:00Z'
         assert result['temperature'] == 20.0
         assert result['humidity'] == 50.0
-        assert result['co2_level'] is None
-        assert result['door_status'] is None
+        # Stop sensor data should not have bus-specific fields
+        assert 'co2_level' not in result
+        assert 'door_status' not in result
     
     def test_format_sensor_response_with_missing_fields(self):
         """Test formatting response with missing optional fields."""
