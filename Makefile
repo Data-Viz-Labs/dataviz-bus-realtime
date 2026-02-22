@@ -33,6 +33,17 @@ init:
 plan: init
 	cd terraform && terraform plan -var="aws_region=$(AWS_REGION)"
 
+apply:
+	@echo "Applying Terraform configuration..."
+	cd terraform && terraform apply -var="aws_region=$(AWS_REGION)" -auto-approve
+
+deploy: package-all-lambdas init plan apply
+	@echo "Setup infrastructure and load data..."	
+	$(MAKE) load-config
+	$(MAKE) push-images
+	$(MAKE) export-keys
+	@echo "Deployment complete!"
+
 build-feeders:
 	@echo "Building container images with Podman..."
 	podman build -t bus-simulator-people-count:latest -f docker/Dockerfile.people_count .
@@ -77,12 +88,6 @@ package-all-lambdas:
 	./scripts/package_lambda.sh websocket_handler
 	./scripts/package_lambda.sh websocket_authorizer
 	@echo "All Lambda functions packaged successfully!"
-
-deploy: package-all-lambdas push-images init
-	@echo "Deploying infrastructure..."
-	cd terraform && terraform apply -var="aws_region=$(AWS_REGION)" -auto-approve
-	$(MAKE) load-config
-	@echo "Deployment complete!"
 
 verify:
 	@echo "Running pre-hackathon verification checks..."
