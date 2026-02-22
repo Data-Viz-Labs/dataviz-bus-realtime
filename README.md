@@ -214,8 +214,30 @@ For hackathon preparation:
 
 1. **Day -7**: Deploy infrastructure (`make deploy`)
 2. **Day -7 to Day -2**: Feeders run continuously, accumulating 5 days of data
-3. **Day -1**: Verify data quality and API functionality
-4. **Day 0**: Hackathon begins, system continues running
+3. **Day -1**: Verify system readiness (`make verify`)
+4. **Day -1**: Export and distribute API keys (`make export-keys`)
+5. **Day 0**: Hackathon begins, system continues running
+
+### Pre-Hackathon Verification
+
+Before the hackathon, run the verification script to ensure everything is working:
+
+```bash
+# Run verification checks
+make verify AWS_REGION=eu-west-1
+
+# Run with verbose output
+make verify AWS_REGION=eu-west-1 VERBOSE=true
+```
+
+The verification script checks:
+- ✓ Timestream has at least 5 days of historical data
+- ✓ All Fargate services are running
+- ✓ REST API endpoints respond correctly
+- ✓ API key authentication is enforced
+- ✓ WebSocket connections work properly
+
+See [docs/VERIFICATION_SCRIPT.md](docs/VERIFICATION_SCRIPT.md) for detailed documentation.
 
 ## Monitoring
 
