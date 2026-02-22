@@ -1,0 +1,12 @@
+# Variables for EventBridge module
+
+variable "lambda_websocket_arn" {
+  description = "ARN of the WebSocket handler Lambda function"
+  type        = string
+}
+
+variable "tags" {
+  description = "Tags to apply to all resources"
+  type        = map(string)
+  default     = {}
+}
