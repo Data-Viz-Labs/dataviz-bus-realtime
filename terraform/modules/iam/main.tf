@@ -239,3 +239,34 @@ resource "aws_iam_role_policy" "ecs_ecr_pull" {
     ]
   })
 }
+
+# API Gateway CloudWatch Logs role
+resource "aws_iam_role" "apigateway_cloudwatch" {
+  name = "bus-simulator-apigateway-cloudwatch"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "apigateway.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = var.tags
+}
+
+# API Gateway CloudWatch Logs policy
+resource "aws_iam_role_policy_attachment" "apigateway_cloudwatch" {
+  role       = aws_iam_role.apigateway_cloudwatch.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+}
+
+# API Gateway account settings - CloudWatch Logs role
+resource "aws_api_gateway_account" "main" {
+  cloudwatch_role_arn = aws_iam_role.apigateway_cloudwatch.arn
+}

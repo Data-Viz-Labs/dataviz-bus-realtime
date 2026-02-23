@@ -15,7 +15,7 @@ variable "timestream_database_name" {
 variable "participant_count" {
   description = "Number of API keys to generate for hackathon participants"
   type        = number
-  default     = 42
+  default     = 12
 }
 
 variable "create_vpc" {

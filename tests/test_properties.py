@@ -4296,3 +4296,404 @@ class TestProperty8HistoricalBusPositionQueryCorrectness:
         if query_time.tzinfo is None:
             query_time = query_time.replace(tzinfo=timezone.utc)
         assert returned_time <= query_time
+
+
+
+class TestProperty16BusPositionsFollowDefinedRoutes:
+    """
+    Property 16: Bus positions follow defined routes
+    
+    **Validates: Requirements 3.5**
+    
+    For any generated bus position, the coordinates (latitude, longitude) should be
+    within 50 meters of the corresponding route geometry stored in Amazon Location.
+    
+    This property verifies that the Route class correctly calculates positions along
+    the route using linear interpolation between stops, and that all generated
+    coordinates lie on or very close to the route geometry.
+    """
+    
+    @staticmethod
+    def _calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """
+        Calculate distance between two coordinates using Haversine formula.
+        
+        Args:
+            lat1: Latitude of first point
+            lon1: Longitude of first point
+            lat2: Latitude of second point
+            lon2: Longitude of second point
+        
+        Returns:
+            Distance in meters
+        """
+        # Earth radius in meters
+        R = 6371000
+        
+        # Convert to radians
+        lat1_rad = math.radians(lat1)
+        lat2_rad = math.radians(lat2)
+        delta_lat = math.radians(lat2 - lat1)
+        delta_lon = math.radians(lon2 - lon1)
+        
+        # Haversine formula
+        a = math.sin(delta_lat / 2) ** 2 + \
+            math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        
+        return R * c
+    
+    @staticmethod
+    def _distance_to_line_segment(point_lat: float, point_lon: float,
+                                   seg_start_lat: float, seg_start_lon: float,
+                                   seg_end_lat: float, seg_end_lon: float) -> float:
+        """
+        Calculate the minimum distance from a point to a line segment.
+        
+        This uses the perpendicular distance to the line, or the distance to
+        the nearest endpoint if the perpendicular falls outside the segment.
+        
+        Args:
+            point_lat: Latitude of the point
+            point_lon: Longitude of the point
+            seg_start_lat: Latitude of segment start
+            seg_start_lon: Longitude of segment start
+            seg_end_lat: Latitude of segment end
+            seg_end_lon: Longitude of segment end
+        
+        Returns:
+            Minimum distance in meters
+        """
+        # For small distances, we can approximate using Euclidean distance
+        # with latitude/longitude scaled appropriately
+        # This is accurate enough for distances < 100km
+        
+        # Convert to approximate meters (at Madrid's latitude ~40°)
+        lat_to_meters = 111320  # meters per degree latitude
+        lon_to_meters = 85390   # meters per degree longitude at 40° latitude
+        
+        # Convert all points to meters relative to segment start
+        px = (point_lon - seg_start_lon) * lon_to_meters
+        py = (point_lat - seg_start_lat) * lat_to_meters
+        
+        dx = (seg_end_lon - seg_start_lon) * lon_to_meters
+        dy = (seg_end_lat - seg_start_lat) * lat_to_meters
+        
+        # Calculate segment length squared
+        segment_length_sq = dx * dx + dy * dy
+        
+        # If segment has zero length, return distance to the point
+        if segment_length_sq == 0:
+            return math.sqrt(px * px + py * py)
+        
+        # Calculate projection parameter t
+        # t = 0 means closest to start, t = 1 means closest to end
+        t = max(0, min(1, (px * dx + py * dy) / segment_length_sq))
+        
+        # Calculate closest point on segment
+        closest_x = t * dx
+        closest_y = t * dy
+        
+        # Calculate distance from point to closest point
+        dist_x = px - closest_x
+        dist_y = py - closest_y
+        
+        return math.sqrt(dist_x * dist_x + dist_y * dist_y)
+    
+    @staticmethod
+    def _create_madrid_test_route() -> Route:
+        """
+        Create a test route with realistic Madrid Centro coordinates.
+        
+        This route represents a simplified bus line through central Madrid
+        with three stops forming a realistic route geometry.
+        """
+        stops = [
+            Stop(
+                stop_id="S001",
+                name="Plaza de Castilla",
+                latitude=40.4657,
+                longitude=-3.6886,
+                is_terminal=True,
+                base_arrival_rate=2.5
+            ),
+            Stop(
+                stop_id="S002",
+                name="Paseo de la Castellana",
+                latitude=40.4500,
+                longitude=-3.6900,
+                is_terminal=False,
+                base_arrival_rate=1.8
+            ),
+            Stop(
+                stop_id="S003",
+                name="Atocha",
+                latitude=40.4400,
+                longitude=-3.6950,
+                is_terminal=True,
+                base_arrival_rate=2.0
+            ),
+        ]
+        return Route(line_id="L1", name="Madrid Centro Test Route", stops=stops)
+    
+    @settings(max_examples=100)
+    @given(
+        position=st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False),
+        direction=st.integers(min_value=0, max_value=1)
+    )
+    def test_bus_position_within_50m_of_route(self, position, direction):
+        """
+        Test that any bus position is within 50 meters of the route geometry.
+        
+        For any position on the route (0.0 to 1.0) and any direction (0=outbound, 1=inbound),
+        the coordinates returned by get_coordinates() should be within 50 meters of the
+        route's line segments.
+        """
+        route = self._create_madrid_test_route()
+        
+        # Get coordinates at this position
+        lat, lon = route.get_coordinates(position, direction)
+        
+        # Find the minimum distance to any segment of the route
+        min_distance = float('inf')
+        
+        for i in range(len(route.stops) - 1):
+            seg_start = route.stops[i]
+            seg_end = route.stops[i + 1]
+            
+            distance = self._distance_to_line_segment(
+                lat, lon,
+                seg_start.latitude, seg_start.longitude,
+                seg_end.latitude, seg_end.longitude
+            )
+            
+            min_distance = min(min_distance, distance)
+        
+        # Assert that the point is within 50 meters of the route
+        assert min_distance <= 50.0, \
+            f"Position {position:.4f} (direction={direction}) generated coordinates " \
+            f"({lat:.6f}, {lon:.6f}) that are {min_distance:.2f}m from the route " \
+            f"(max allowed: 50m)"
+    
+    @settings(max_examples=100)
+    @given(
+        start_position=st.floats(min_value=0.0, max_value=0.9, allow_nan=False, allow_infinity=False),
+        distance_meters=st.floats(min_value=0.0, max_value=5000.0, allow_nan=False, allow_infinity=False),
+        direction=st.integers(min_value=0, max_value=1)
+    )
+    def test_advanced_position_stays_on_route(self, start_position, distance_meters, direction):
+        """
+        Test that advancing position along a route keeps the bus on the route.
+        
+        For any starting position, distance traveled, and direction, the new position
+        should still generate coordinates within 50m of the route geometry.
+        """
+        route = self._create_madrid_test_route()
+        
+        # Advance position
+        new_position = route.advance_position(start_position, distance_meters, direction)
+        
+        # Get coordinates at new position
+        lat, lon = route.get_coordinates(new_position, direction)
+        
+        # Find the minimum distance to any segment of the route
+        min_distance = float('inf')
+        
+        for i in range(len(route.stops) - 1):
+            seg_start = route.stops[i]
+            seg_end = route.stops[i + 1]
+            
+            distance = self._distance_to_line_segment(
+                lat, lon,
+                seg_start.latitude, seg_start.longitude,
+                seg_end.latitude, seg_end.longitude
+            )
+            
+            min_distance = min(min_distance, distance)
+        
+        # Assert that the point is within 50 meters of the route
+        assert min_distance <= 50.0, \
+            f"After advancing from {start_position:.4f} by {distance_meters:.2f}m " \
+            f"(direction={direction}) to {new_position:.4f}, coordinates " \
+            f"({lat:.6f}, {lon:.6f}) are {min_distance:.2f}m from route (max: 50m)"
+    
+    @settings(max_examples=100)
+    @given(
+        position=st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False)
+    )
+    def test_coordinates_on_route_for_both_directions(self, position):
+        """
+        Test that coordinates are on route for both outbound and inbound directions.
+        
+        For any position, both direction=0 (outbound) and direction=1 (inbound)
+        should generate coordinates within 50m of the route.
+        """
+        route = self._create_madrid_test_route()
+        
+        for direction in [0, 1]:
+            # Get coordinates at this position and direction
+            lat, lon = route.get_coordinates(position, direction)
+            
+            # Find the minimum distance to any segment of the route
+            min_distance = float('inf')
+            
+            for i in range(len(route.stops) - 1):
+                seg_start = route.stops[i]
+                seg_end = route.stops[i + 1]
+                
+                distance = self._distance_to_line_segment(
+                    lat, lon,
+                    seg_start.latitude, seg_start.longitude,
+                    seg_end.latitude, seg_end.longitude
+                )
+                
+                min_distance = min(min_distance, distance)
+            
+            # Assert that the point is within 50 meters of the route
+            assert min_distance <= 50.0, \
+                f"Position {position:.4f} with direction={direction} generated " \
+                f"coordinates ({lat:.6f}, {lon:.6f}) that are {min_distance:.2f}m " \
+                f"from the route (max allowed: 50m)"
+    
+    @settings(max_examples=50)
+    @given(
+        position=st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False)
+    )
+    def test_coordinates_match_stops_at_exact_positions(self, position):
+        """
+        Test that coordinates at stop positions match the stop coordinates exactly.
+        
+        When the position corresponds exactly to a stop location, the returned
+        coordinates should match the stop's coordinates (within 1 meter for
+        floating point precision).
+        """
+        route = self._create_madrid_test_route()
+        
+        # Calculate the exact position of each stop
+        route._ensure_distances_calculated()
+        total_distance = route.get_total_distance()
+        
+        accumulated_distance = 0.0
+        for i, stop in enumerate(route.stops):
+            stop_position = accumulated_distance / total_distance if total_distance > 0 else 0.0
+            
+            # Get coordinates at this exact stop position (outbound direction)
+            lat, lon = route.get_coordinates(stop_position, direction=0)
+            
+            # Calculate distance from returned coordinates to stop coordinates
+            distance = self._calculate_distance(lat, lon, stop.latitude, stop.longitude)
+            
+            # Should be very close (within 1 meter due to floating point precision)
+            assert distance < 1.0, \
+                f"At stop {stop.name} (position {stop_position:.4f}), " \
+                f"coordinates ({lat:.6f}, {lon:.6f}) are {distance:.2f}m from " \
+                f"stop coordinates ({stop.latitude:.6f}, {stop.longitude:.6f})"
+            
+            # Move to next segment
+            if i < len(route._segment_distances):
+                accumulated_distance += route._segment_distances[i]
+    
+    def test_edge_cases_start_and_end_positions(self):
+        """
+        Test that positions at the start (0.0) and end (1.0) return correct coordinates.
+        
+        The start position should match the first stop, and the end position should
+        match the last stop.
+        """
+        route = self._create_madrid_test_route()
+        
+        # Test start position (outbound)
+        lat_start, lon_start = route.get_coordinates(0.0, direction=0)
+        first_stop = route.stops[0]
+        distance_start = self._calculate_distance(
+            lat_start, lon_start,
+            first_stop.latitude, first_stop.longitude
+        )
+        assert distance_start < 1.0, \
+            f"Start position (0.0) should match first stop, but is {distance_start:.2f}m away"
+        
+        # Test end position (outbound)
+        lat_end, lon_end = route.get_coordinates(1.0, direction=0)
+        last_stop = route.stops[-1]
+        distance_end = self._calculate_distance(
+            lat_end, lon_end,
+            last_stop.latitude, last_stop.longitude
+        )
+        assert distance_end < 1.0, \
+            f"End position (1.0) should match last stop, but is {distance_end:.2f}m away"
+        
+        # Test start position (inbound - should be at last stop)
+        lat_start_inbound, lon_start_inbound = route.get_coordinates(0.0, direction=1)
+        distance_start_inbound = self._calculate_distance(
+            lat_start_inbound, lon_start_inbound,
+            last_stop.latitude, last_stop.longitude
+        )
+        assert distance_start_inbound < 1.0, \
+            f"Start position (0.0) inbound should match last stop, but is {distance_start_inbound:.2f}m away"
+        
+        # Test end position (inbound - should be at first stop)
+        lat_end_inbound, lon_end_inbound = route.get_coordinates(1.0, direction=1)
+        distance_end_inbound = self._calculate_distance(
+            lat_end_inbound, lon_end_inbound,
+            first_stop.latitude, first_stop.longitude
+        )
+        assert distance_end_inbound < 1.0, \
+            f"End position (1.0) inbound should match first stop, but is {distance_end_inbound:.2f}m away"
+    
+    @settings(max_examples=50)
+    @given(
+        bus_id=entity_ids,
+        speed=st.floats(min_value=10.0, max_value=60.0, allow_nan=False, allow_infinity=False),
+        time_delta_seconds=st.integers(min_value=1, max_value=300)
+    )
+    def test_bus_movement_simulation_stays_on_route(self, bus_id, speed, time_delta_seconds):
+        """
+        Test that bus movement simulation keeps the bus on the route.
+        
+        For any bus state and time delta, after simulating movement, the resulting
+        position should generate coordinates within 50m of the route.
+        """
+        from src.feeders.bus_movement_simulator import simulate_bus_movement
+        from datetime import timedelta
+        
+        route = self._create_madrid_test_route()
+        
+        # Create a bus state at a random starting position
+        # Use the same line_id as the route
+        bus = BusState(
+            bus_id=bus_id,
+            line_id=route.line_id,  # Match the route's line_id
+            capacity=80,
+            passenger_count=20,
+            position_on_route=0.0,
+            speed=speed,
+            direction=0
+        )
+        
+        # Simulate movement
+        time_delta = timedelta(seconds=time_delta_seconds)
+        position_data, _ = simulate_bus_movement(bus, route, time_delta)
+        
+        # Get the coordinates from the position data
+        lat = position_data.latitude
+        lon = position_data.longitude
+        
+        # Find the minimum distance to any segment of the route
+        min_distance = float('inf')
+        
+        for i in range(len(route.stops) - 1):
+            seg_start = route.stops[i]
+            seg_end = route.stops[i + 1]
+            
+            distance = self._distance_to_line_segment(
+                lat, lon,
+                seg_start.latitude, seg_start.longitude,
+                seg_end.latitude, seg_end.longitude
+            )
+            
+            min_distance = min(min_distance, distance)
+        
+        # Assert that the point is within 50 meters of the route
+        assert min_distance <= 50.0, \
+            f"After simulating bus movement (speed={speed:.1f} km/h, time={time_delta_seconds}s), " \
+            f"coordinates ({lat:.6f}, {lon:.6f}) are {min_distance:.2f}m from route (max: 50m)"

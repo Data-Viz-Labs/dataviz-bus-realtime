@@ -1,5 +1,34 @@
 # API Gateway module for Madrid Bus Real-Time Simulator
-# Creates REST API with API key authentication and WebSocket API with Lambda integrations
+# Creates REST API with API key authentication (no rate limiting) and WebSocket API with Lambda integrations
+
+# CloudWatch Log Groups for Lambda functions
+resource "aws_cloudwatch_log_group" "people_count_api" {
+  name              = "/aws/lambda/bus-simulator-people-count"
+  retention_in_days = 30
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_log_group" "sensors_api" {
+  name              = "/aws/lambda/bus-simulator-sensors"
+  retention_in_days = 30
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_log_group" "bus_position_api" {
+  name              = "/aws/lambda/bus-simulator-bus-position"
+  retention_in_days = 30
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_log_group" "websocket_handler" {
+  name              = "/aws/lambda/bus-simulator-websocket"
+  retention_in_days = 30
+
+  tags = var.tags
+}
 
 # Lambda functions
 resource "aws_lambda_function" "people_count_api" {
@@ -89,39 +118,9 @@ resource "aws_api_gateway_rest_api" "main" {
   tags = var.tags
 }
 
-# API Gateway deployment
+# API Gateway deployment - Manual redeployment required after changes
 resource "aws_api_gateway_deployment" "main" {
   rest_api_id = aws_api_gateway_rest_api.main.id
-
-  # Force redeployment when routes change
-  triggers = {
-    redeployment = sha1(jsonencode([
-      aws_api_gateway_resource.people_count.id,
-      aws_api_gateway_resource.sensors.id,
-      aws_api_gateway_resource.sensors_entity_type.id,
-      aws_api_gateway_resource.sensors_entity_id.id,
-      aws_api_gateway_resource.bus_position.id,
-      aws_api_gateway_resource.bus_position_id.id,
-      aws_api_gateway_resource.bus_position_line.id,
-      aws_api_gateway_resource.bus_position_line_id.id,
-      aws_api_gateway_method.people_count.id,
-      aws_api_gateway_method.sensors.id,
-      aws_api_gateway_method.bus_position.id,
-      aws_api_gateway_method.bus_position_line.id,
-      aws_api_gateway_integration.people_count.id,
-      aws_api_gateway_integration.sensors.id,
-      aws_api_gateway_integration.bus_position.id,
-      aws_api_gateway_integration.bus_position_line.id,
-    ]))
-  }
-
-  # Ensure all integrations are created before deployment
-  depends_on = [
-    aws_api_gateway_integration.people_count,
-    aws_api_gateway_integration.sensors,
-    aws_api_gateway_integration.bus_position,
-    aws_api_gateway_integration.bus_position_line,
-  ]
 
   lifecycle {
     create_before_destroy = true
@@ -133,6 +132,48 @@ resource "aws_api_gateway_stage" "prod" {
   deployment_id = aws_api_gateway_deployment.main.id
   rest_api_id   = aws_api_gateway_rest_api.main.id
   stage_name    = "prod"
+
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.api_gateway_access_logs.arn
+    format = jsonencode({
+      requestId      = "$context.requestId"
+      ip             = "$context.identity.sourceIp"
+      caller         = "$context.identity.caller"
+      user           = "$context.identity.user"
+      requestTime    = "$context.requestTime"
+      httpMethod     = "$context.httpMethod"
+      resourcePath   = "$context.resourcePath"
+      status         = "$context.status"
+      protocol       = "$context.protocol"
+      responseLength = "$context.responseLength"
+      errorMessage   = "$context.error.message"
+      errorType      = "$context.error.messageString"
+    })
+  }
+
+  # Enable detailed CloudWatch metrics and execution logging
+  xray_tracing_enabled = false
+  
+  tags = var.tags
+}
+
+# Method settings for execution logging
+resource "aws_api_gateway_method_settings" "all" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  stage_name  = aws_api_gateway_stage.prod.stage_name
+  method_path = "*/*"
+
+  settings {
+    metrics_enabled    = true
+    logging_level      = "INFO"
+    data_trace_enabled = true
+  }
+}
+
+# CloudWatch Log Group for API Gateway access logs
+resource "aws_cloudwatch_log_group" "api_gateway_access_logs" {
+  name              = "/aws/apigateway/${aws_api_gateway_rest_api.main.name}"
+  retention_in_days = 7
 
   tags = var.tags
 }
@@ -337,30 +378,22 @@ resource "aws_lambda_permission" "bus_position_api" {
 
 # API Keys for hackathon participants
 resource "aws_api_gateway_api_key" "participant_keys" {
-  count = var.participant_count
-  name  = "participant-${count.index + 1}"
+  count       = var.participant_count
+  name        = "participant-${count.index + 1}"
+  description = "API Key for participant ${count.index + 1} to access the bus simulator API"
+  enabled     = true
 
   tags = var.tags
 }
 
-# Usage Plan with rate limiting and quotas
+# Usage Plan without rate limiting
 resource "aws_api_gateway_usage_plan" "hackathon" {
   name        = "hackathon-usage-plan"
-  description = "Usage plan for hackathon participants with rate limiting"
+  description = "Usage plan for hackathon participants (no rate limiting)"
 
   api_stages {
     api_id = aws_api_gateway_rest_api.main.id
     stage  = aws_api_gateway_stage.prod.stage_name
-  }
-
-  quota_settings {
-    limit  = 10000
-    period = "DAY"
-  }
-
-  throttle_settings {
-    burst_limit = 100
-    rate_limit  = 50
   }
 
   tags = var.tags
