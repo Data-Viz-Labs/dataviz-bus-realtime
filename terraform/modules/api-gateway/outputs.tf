@@ -9,7 +9,7 @@ output "rest_api_id" {
   description = "REST API Gateway ID"
   value       = aws_api_gateway_rest_api.main.id
 }
-
+/*
 output "api_keys" {
   description = "List of API key IDs for hackathon participants"
   value       = aws_api_gateway_api_key.participant_keys[*].id
@@ -26,7 +26,7 @@ output "usage_plan_id" {
   description = "Usage plan ID for hackathon participants"
   value       = aws_api_gateway_usage_plan.hackathon.id
 }
-
+*/
 output "websocket_api_endpoint" {
   description = "WebSocket API Gateway endpoint URL"
   value       = aws_apigatewayv2_stage.websocket.invoke_url
