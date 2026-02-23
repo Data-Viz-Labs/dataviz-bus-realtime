@@ -26,7 +26,7 @@ output "api_gateway_websocket_endpoint" {
   description = "WebSocket API Gateway endpoint URL"
   value       = module.api_gateway.websocket_api_endpoint
 }
-/*
+
 output "api_keys" {
   description = "List of API key IDs for hackathon participants"
   value       = module.api_gateway.api_keys
@@ -43,7 +43,6 @@ output "usage_plan_id" {
   description = "Usage plan ID for hackathon participants"
   value       = module.api_gateway.usage_plan_id
 }
-*/
 # Fargate outputs
 output "ecs_cluster_name" {
   description = "Name of the ECS cluster"

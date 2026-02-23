@@ -10,9 +10,26 @@ resource "aws_api_gateway_rest_api" "main" {
   tags = var.tags
 }
 
-# API Gateway deployment
+# API Gateway deployment with automatic redeployment trigger
 resource "aws_api_gateway_deployment" "main" {
   rest_api_id = aws_api_gateway_rest_api.main.id
+
+  triggers = {
+    redeployment = sha256(jsonencode([
+      aws_api_gateway_rest_api.main.body,
+      aws_api_gateway_resource.people_count.id,
+      aws_api_gateway_resource.sensors.id,
+      aws_api_gateway_resource.bus_position.id,
+      aws_api_gateway_method.people_count.id,
+      aws_api_gateway_method.sensors.id,
+      aws_api_gateway_method.bus_position.id,
+      aws_api_gateway_method.bus_position_line.id,
+      aws_api_gateway_integration.people_count.id,
+      aws_api_gateway_integration.sensors.id,
+      aws_api_gateway_integration.bus_position.id,
+      aws_api_gateway_integration.bus_position_line.id,
+    ]))
+  }
 
   lifecycle {
     create_before_destroy = true
@@ -23,7 +40,7 @@ resource "aws_api_gateway_deployment" "main" {
 resource "aws_api_gateway_stage" "prod" {
   deployment_id = aws_api_gateway_deployment.main.id
   rest_api_id   = aws_api_gateway_rest_api.main.id
-  stage_name    = "prod"
+  stage_name    = "v1"
 
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.api_gateway_access_logs.arn
@@ -44,7 +61,7 @@ resource "aws_api_gateway_stage" "prod" {
   }
 
   # Enable detailed CloudWatch metrics and execution logging
-  xray_tracing_enabled = false
+  xray_tracing_enabled = true
 
   tags = var.tags
 }
@@ -150,7 +167,7 @@ resource "aws_api_gateway_method" "people_count" {
   resource_id      = aws_api_gateway_resource.people_count_stop_id.id
   http_method      = "GET"
   authorization    = "NONE"
-  api_key_required = false
+  api_key_required = true
 
   request_parameters = {
     "method.request.path.stop_id" = true
@@ -173,7 +190,7 @@ resource "aws_api_gateway_method" "sensors" {
   resource_id      = aws_api_gateway_resource.sensors_entity_id.id
   http_method      = "GET"
   authorization    = "NONE"
-  api_key_required = false
+  api_key_required = true
 
   request_parameters = {
     "method.request.path.entity_type" = true
@@ -197,7 +214,7 @@ resource "aws_api_gateway_method" "bus_position" {
   resource_id      = aws_api_gateway_resource.bus_position_id.id
   http_method      = "GET"
   authorization    = "NONE"
-  api_key_required = false
+  api_key_required = true
 
   request_parameters = {
     "method.request.path.bus_id" = true
@@ -220,7 +237,7 @@ resource "aws_api_gateway_method" "bus_position_line" {
   resource_id      = aws_api_gateway_resource.bus_position_line_id.id
   http_method      = "GET"
   authorization    = "NONE"
-  api_key_required = false
+  api_key_required = true
 
   request_parameters = {
     "method.request.path.line_id" = true
