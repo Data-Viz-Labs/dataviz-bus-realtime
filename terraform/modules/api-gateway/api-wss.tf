@@ -1,4 +1,3 @@
-
 # WebSocket API Gateway
 resource "aws_apigatewayv2_api" "websocket" {
   name                       = "bus-simulator-websocket-api"
@@ -15,6 +14,15 @@ resource "aws_apigatewayv2_stage" "websocket" {
   auto_deploy = true
 
   tags = var.tags
+}
+
+# Lambda Authorizer for WebSocket
+resource "aws_apigatewayv2_authorizer" "websocket" {
+  api_id           = aws_apigatewayv2_api.websocket.id
+  authorizer_type  = "REQUEST"
+  authorizer_uri   = aws_lambda_function.websocket_authorizer.invoke_arn
+  identity_sources = ["route.request.querystring.api_key"]
+  name             = "websocket-api-key-authorizer"
 }
 
 # WebSocket integrations
@@ -36,11 +44,13 @@ resource "aws_apigatewayv2_integration" "websocket_default" {
   integration_uri  = aws_lambda_function.websocket_handler.invoke_arn
 }
 
-# WebSocket routes
+# WebSocket routes with authorizer
 resource "aws_apigatewayv2_route" "websocket_connect" {
-  api_id    = aws_apigatewayv2_api.websocket.id
-  route_key = "$connect"
-  target    = "integrations/${aws_apigatewayv2_integration.websocket_connect.id}"
+  api_id             = aws_apigatewayv2_api.websocket.id
+  route_key          = "$connect"
+  target             = "integrations/${aws_apigatewayv2_integration.websocket_connect.id}"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.websocket_v2.id
 }
 
 resource "aws_apigatewayv2_route" "websocket_disconnect" {
@@ -62,4 +72,12 @@ resource "aws_lambda_permission" "websocket_api" {
   function_name = aws_lambda_function.websocket_handler.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.websocket.execution_arn}/*/*"
+}
+
+resource "aws_lambda_permission" "websocket_authorizer" {
+  statement_id  = "AllowExecutionFromAPIGatewayAuthorizer"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.websocket_authorizer.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.websocket.execution_arn}/authorizers/${aws_apigatewayv2_authorizer.websocket.id}"
 }

@@ -39,3 +39,15 @@ variable "tags" {
     ManagedBy   = "Terraform"
   }
 }
+
+variable "monthly_budget_limit" {
+  description = "Monthly budget limit in USD for cost monitoring"
+  type        = number
+  default     = 200
+}
+
+variable "budget_alert_emails" {
+  description = "Email addresses to receive budget alert notifications"
+  type        = list(string)
+  default     = []
+}

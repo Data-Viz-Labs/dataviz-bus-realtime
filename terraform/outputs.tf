@@ -27,21 +27,21 @@ output "api_gateway_websocket_endpoint" {
   value       = module.api_gateway.websocket_api_endpoint
 }
 
-output "api_keys" {
-  description = "List of API key IDs for hackathon participants"
-  value       = module.api_gateway.api_keys
-  sensitive   = true
+# Secrets Manager outputs (replaces API key outputs)
+output "api_key_secret_id" {
+  description = "Secrets Manager secret ID for the unified API key"
+  value       = module.api_gateway.api_key_secret_id
 }
 
-output "api_key_values" {
-  description = "List of API key values for hackathon participants (use for distribution)"
-  value       = module.api_gateway.api_key_values
-  sensitive   = true
+output "api_key_secret_arn" {
+  description = "Secrets Manager secret ARN for the unified API key"
+  value       = module.api_gateway.api_key_secret_arn
 }
 
-output "usage_plan_id" {
-  description = "Usage plan ID for hackathon participants"
-  value       = module.api_gateway.usage_plan_id
+output "api_key_value" {
+  description = "The generated API key value (use scripts/export_api_key.py to retrieve)"
+  value       = module.api_gateway.api_key_value
+  sensitive   = true
 }
 # Fargate outputs
 output "ecs_cluster_name" {
@@ -80,4 +80,15 @@ output "location_route_calculator_name" {
 output "location_map_name" {
   description = "Name of the Amazon Location map"
   value       = module.location.map_name
+}
+
+# Cost Management outputs
+output "budget_name" {
+  description = "Name of the AWS Budget for cost monitoring"
+  value       = module.cost_management.budget_name
+}
+
+output "budget_alert_sns_topic" {
+  description = "ARN of the SNS topic for budget alerts"
+  value       = module.cost_management.sns_topic_arn
 }

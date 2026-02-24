@@ -10,21 +10,21 @@ output "rest_api_id" {
   value       = aws_api_gateway_rest_api.main.id
 }
 
-output "api_keys" {
-  description = "List of API key IDs for hackathon participants"
-  value       = aws_api_gateway_api_key.participant_keys[*].id
-  sensitive   = true
+# Secrets Manager outputs (replaces API key outputs)
+output "api_key_secret_id" {
+  description = "Secrets Manager secret ID for the unified API key"
+  value       = aws_secretsmanager_secret.api_key.id
 }
 
-output "api_key_values" {
-  description = "List of API key values for hackathon participants"
-  value       = aws_api_gateway_api_key.participant_keys[*].value
-  sensitive   = true
+output "api_key_secret_arn" {
+  description = "Secrets Manager secret ARN for the unified API key"
+  value       = aws_secretsmanager_secret.api_key.arn
 }
 
-output "usage_plan_id" {
-  description = "Usage plan ID for hackathon participants"
-  value       = aws_api_gateway_usage_plan.hackathon.id
+output "api_key_value" {
+  description = "The generated API key value (sensitive)"
+  value       = random_password.api_key.result
+  sensitive   = true
 }
 
 output "websocket_api_endpoint" {
@@ -56,3 +56,14 @@ output "lambda_websocket_arn" {
   description = "ARN of the WebSocket handler Lambda function"
   value       = aws_lambda_function.websocket_handler.arn
 }
+
+output "rest_authorizer_arn" {
+  description = "ARN of the REST API Custom Authorizer Lambda function"
+  value       = aws_lambda_function.rest_authorizer.arn
+}
+
+output "websocket_authorizer_arn" {
+  description = "ARN of the WebSocket Custom Authorizer Lambda function"
+  value       = aws_lambda_function.websocket_authorizer_v2.arn
+}
+

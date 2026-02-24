@@ -73,3 +73,21 @@ resource "aws_lambda_function" "websocket_handler" {
 
   tags = var.tags
 }
+
+resource "aws_lambda_function" "websocket_authorizer" {
+  filename         = "${path.root}/../build/websocket_authorizer.zip"
+  function_name    = "bus-simulator-websocket-authorizer"
+  role             = var.lambda_execution_role_arn
+  handler          = "websocket_authorizer.lambda_handler"
+  source_code_hash = filebase64sha256("${path.root}/../build/websocket_authorizer.zip")
+  runtime          = "python3.11"
+  timeout          = 10
+
+  environment {
+    variables = {
+      REST_API_ID = aws_api_gateway_rest_api.main.id
+    }
+  }
+
+  tags = var.tags
+}

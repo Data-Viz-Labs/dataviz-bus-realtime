@@ -9,6 +9,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.33"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 }
 
@@ -95,6 +99,16 @@ module "supporting" {
 # Amazon Location (route calculator and map)
 module "location" {
   source = "./modules/location"
+
+  tags = var.tags
+}
+
+# Cost Management (AWS Budgets and SNS notifications)
+module "cost_management" {
+  source = "./modules/cost-management"
+
+  monthly_budget_limit = var.monthly_budget_limit
+  budget_alert_emails  = var.budget_alert_emails
 
   tags = var.tags
 }

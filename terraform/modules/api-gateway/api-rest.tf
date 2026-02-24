@@ -28,8 +28,34 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_integration.sensors.id,
       aws_api_gateway_integration.bus_position.id,
       aws_api_gateway_integration.bus_position_line.id,
+      aws_api_gateway_method.people_count_options.id,
+      aws_api_gateway_method.sensors_options.id,
+      aws_api_gateway_method.bus_position_options.id,
+      aws_api_gateway_method.bus_position_line_options.id,
+      # Force redeploy when API key configuration changes
+      timestamp()
     ]))
   }
+
+  # Ensure all methods and integrations are created before deployment
+  depends_on = [
+    aws_api_gateway_method.people_count,
+    aws_api_gateway_method.sensors,
+    aws_api_gateway_method.bus_position,
+    aws_api_gateway_method.bus_position_line,
+    aws_api_gateway_integration.people_count,
+    aws_api_gateway_integration.sensors,
+    aws_api_gateway_integration.bus_position,
+    aws_api_gateway_integration.bus_position_line,
+    aws_api_gateway_method.people_count_options,
+    aws_api_gateway_method.sensors_options,
+    aws_api_gateway_method.bus_position_options,
+    aws_api_gateway_method.bus_position_line_options,
+    aws_api_gateway_integration.people_count_options,
+    aws_api_gateway_integration.sensors_options,
+    aws_api_gateway_integration.bus_position_options,
+    aws_api_gateway_integration.bus_position_line_options,
+  ]
 
   lifecycle {
     create_before_destroy = true
@@ -40,7 +66,7 @@ resource "aws_api_gateway_deployment" "main" {
 resource "aws_api_gateway_stage" "prod" {
   deployment_id = aws_api_gateway_deployment.main.id
   rest_api_id   = aws_api_gateway_rest_api.main.id
-  stage_name    = "v1"
+  stage_name    = "prod"
 
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.api_gateway_access_logs.arn
@@ -88,7 +114,7 @@ resource "aws_api_gateway_gateway_response" "cors" {
 
   response_parameters = {
     "gatewayresponse.header.Access-Control-Allow-Origin"  = "'*'"
-    "gatewayresponse.header.Access-Control-Allow-Headers" = "'*'"
+    "gatewayresponse.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
     "gatewayresponse.header.Access-Control-Allow-Methods" = "'GET,OPTIONS'"
   }
 }
@@ -99,7 +125,7 @@ resource "aws_api_gateway_gateway_response" "cors_5xx" {
 
   response_parameters = {
     "gatewayresponse.header.Access-Control-Allow-Origin"  = "'*'"
-    "gatewayresponse.header.Access-Control-Allow-Headers" = "'*'"
+    "gatewayresponse.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
     "gatewayresponse.header.Access-Control-Allow-Methods" = "'GET,OPTIONS'"
   }
 }
@@ -166,12 +192,20 @@ resource "aws_api_gateway_method" "people_count" {
   rest_api_id      = aws_api_gateway_rest_api.main.id
   resource_id      = aws_api_gateway_resource.people_count_stop_id.id
   http_method      = "GET"
-  authorization    = "NONE"
-  api_key_required = true
+  authorization    = "CUSTOM"
+  authorizer_id    = aws_api_gateway_authorizer.rest.id
+  api_key_required = false
 
   request_parameters = {
     "method.request.path.stop_id" = true
   }
+}
+
+resource "aws_api_gateway_method" "people_count_options" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.people_count_stop_id.id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
 }
 
 resource "aws_api_gateway_integration" "people_count" {
@@ -184,18 +218,63 @@ resource "aws_api_gateway_integration" "people_count" {
   uri                     = aws_lambda_function.people_count_api.invoke_arn
 }
 
+resource "aws_api_gateway_integration" "people_count_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.people_count_stop_id.id
+  http_method = aws_api_gateway_method.people_count_options.http_method
+  type        = "MOCK"
+
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "people_count_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.people_count_stop_id.id
+  http_method = aws_api_gateway_method.people_count_options.http_method
+  status_code = "200"
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = true
+    "method.response.header.Access-Control-Allow-Methods" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+}
+
+resource "aws_api_gateway_integration_response" "people_count_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.people_count_stop_id.id
+  http_method = aws_api_gateway_method.people_count_options.http_method
+  status_code = aws_api_gateway_method_response.people_count_options.status_code
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+    "method.response.header.Access-Control-Allow-Methods" = "'GET,OPTIONS'"
+    "method.response.header.Access-Control-Allow-Origin"  = "'*'"
+  }
+}
+
 # API Methods - Sensors
 resource "aws_api_gateway_method" "sensors" {
   rest_api_id      = aws_api_gateway_rest_api.main.id
   resource_id      = aws_api_gateway_resource.sensors_entity_id.id
   http_method      = "GET"
-  authorization    = "NONE"
-  api_key_required = true
+  authorization    = "CUSTOM"
+  authorizer_id    = aws_api_gateway_authorizer.rest.id
+  api_key_required = false
 
   request_parameters = {
     "method.request.path.entity_type" = true
     "method.request.path.entity_id"   = true
   }
+}
+
+resource "aws_api_gateway_method" "sensors_options" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.sensors_entity_id.id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
 }
 
 resource "aws_api_gateway_integration" "sensors" {
@@ -208,17 +287,62 @@ resource "aws_api_gateway_integration" "sensors" {
   uri                     = aws_lambda_function.sensors_api.invoke_arn
 }
 
+resource "aws_api_gateway_integration" "sensors_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.sensors_entity_id.id
+  http_method = aws_api_gateway_method.sensors_options.http_method
+  type        = "MOCK"
+
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "sensors_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.sensors_entity_id.id
+  http_method = aws_api_gateway_method.sensors_options.http_method
+  status_code = "200"
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = true
+    "method.response.header.Access-Control-Allow-Methods" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+}
+
+resource "aws_api_gateway_integration_response" "sensors_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.sensors_entity_id.id
+  http_method = aws_api_gateway_method.sensors_options.http_method
+  status_code = aws_api_gateway_method_response.sensors_options.status_code
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+    "method.response.header.Access-Control-Allow-Methods" = "'GET,OPTIONS'"
+    "method.response.header.Access-Control-Allow-Origin"  = "'*'"
+  }
+}
+
 # API Methods - Bus Position (by bus_id)
 resource "aws_api_gateway_method" "bus_position" {
   rest_api_id      = aws_api_gateway_rest_api.main.id
   resource_id      = aws_api_gateway_resource.bus_position_id.id
   http_method      = "GET"
-  authorization    = "NONE"
-  api_key_required = true
+  authorization    = "CUSTOM"
+  authorizer_id    = aws_api_gateway_authorizer.rest.id
+  api_key_required = false
 
   request_parameters = {
     "method.request.path.bus_id" = true
   }
+}
+
+resource "aws_api_gateway_method" "bus_position_options" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.bus_position_id.id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
 }
 
 resource "aws_api_gateway_integration" "bus_position" {
@@ -231,17 +355,62 @@ resource "aws_api_gateway_integration" "bus_position" {
   uri                     = aws_lambda_function.bus_position_api.invoke_arn
 }
 
+resource "aws_api_gateway_integration" "bus_position_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.bus_position_id.id
+  http_method = aws_api_gateway_method.bus_position_options.http_method
+  type        = "MOCK"
+
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "bus_position_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.bus_position_id.id
+  http_method = aws_api_gateway_method.bus_position_options.http_method
+  status_code = "200"
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = true
+    "method.response.header.Access-Control-Allow-Methods" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+}
+
+resource "aws_api_gateway_integration_response" "bus_position_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.bus_position_id.id
+  http_method = aws_api_gateway_method.bus_position_options.http_method
+  status_code = aws_api_gateway_method_response.bus_position_options.status_code
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+    "method.response.header.Access-Control-Allow-Methods" = "'GET,OPTIONS'"
+    "method.response.header.Access-Control-Allow-Origin"  = "'*'"
+  }
+}
+
 # API Methods - Bus Position (by line_id)
 resource "aws_api_gateway_method" "bus_position_line" {
   rest_api_id      = aws_api_gateway_rest_api.main.id
   resource_id      = aws_api_gateway_resource.bus_position_line_id.id
   http_method      = "GET"
-  authorization    = "NONE"
-  api_key_required = true
+  authorization    = "CUSTOM"
+  authorizer_id    = aws_api_gateway_authorizer.rest.id
+  api_key_required = false
 
   request_parameters = {
     "method.request.path.line_id" = true
   }
+}
+
+resource "aws_api_gateway_method" "bus_position_line_options" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.bus_position_line_id.id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
 }
 
 resource "aws_api_gateway_integration" "bus_position_line" {
@@ -252,6 +421,43 @@ resource "aws_api_gateway_integration" "bus_position_line" {
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
   uri                     = aws_lambda_function.bus_position_api.invoke_arn
+}
+
+resource "aws_api_gateway_integration" "bus_position_line_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.bus_position_line_id.id
+  http_method = aws_api_gateway_method.bus_position_line_options.http_method
+  type        = "MOCK"
+
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "bus_position_line_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.bus_position_line_id.id
+  http_method = aws_api_gateway_method.bus_position_line_options.http_method
+  status_code = "200"
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = true
+    "method.response.header.Access-Control-Allow-Methods" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+}
+
+resource "aws_api_gateway_integration_response" "bus_position_line_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.bus_position_line_id.id
+  http_method = aws_api_gateway_method.bus_position_line_options.http_method
+  status_code = aws_api_gateway_method_response.bus_position_line_options.status_code
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+    "method.response.header.Access-Control-Allow-Methods" = "'GET,OPTIONS'"
+    "method.response.header.Access-Control-Allow-Origin"  = "'*'"
+  }
 }
 
 # Lambda permissions for REST API
