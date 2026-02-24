@@ -1,4 +1,6 @@
 .kiro
+.config.kiro
+
 api_keys.txt
 
 # Python
