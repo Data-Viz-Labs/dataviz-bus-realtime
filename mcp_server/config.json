@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "madrid-bus-simulator": {
+      "command": "python",
+      "args": ["-m", "mcp_server.server"],
+      "env": {
+        "TIMESTREAM_DATABASE": "bus_simulator",
+        "AWS_REGION": "eu-west-1"
+      }
+    }
+  }
+}
