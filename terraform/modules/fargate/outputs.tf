@@ -28,3 +28,8 @@ output "service_names" {
     bus_position = aws_ecs_service.bus_position_feeder.name
   }
 }
+
+output "cluster_id" {
+  description = "ID of the ECS cluster"
+  value       = aws_ecs_cluster.bus_simulator.id
+}

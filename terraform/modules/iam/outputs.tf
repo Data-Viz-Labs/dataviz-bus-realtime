@@ -34,3 +34,13 @@ output "apigateway_cloudwatch_role_arn" {
   description = "ARN of the API Gateway CloudWatch Logs role"
   value       = aws_iam_role.apigateway_cloudwatch.arn
 }
+
+output "mcp_task_role_arn" {
+  description = "ARN of the MCP server task role"
+  value       = aws_iam_role.mcp_task.arn
+}
+
+output "mcp_task_role_name" {
+  description = "Name of the MCP server task role"
+  value       = aws_iam_role.mcp_task.name
+}

@@ -234,3 +234,170 @@ resource "aws_cloudwatch_log_group" "ecs_bus_position" {
 
   tags = var.tags
 }
+
+# Security group for MCP server
+resource "aws_security_group" "mcp_server" {
+  count = var.create_vpc ? 1 : 0
+
+  name        = "bus-simulator-mcp-server-sg"
+  description = "Security group for MCP server ECS service"
+  vpc_id      = aws_vpc.main[0].id
+
+  # Allow inbound on MCP server port from within VPC
+  ingress {
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "Allow MCP server traffic from within VPC"
+  }
+
+  # Allow all outbound traffic for AWS service access
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound traffic"
+  }
+
+  tags = merge(var.tags, {
+    Name = "bus-simulator-mcp-server-sg"
+  })
+}
+
+# Security group for VPC Link (API Gateway to MCP server)
+resource "aws_security_group" "vpc_link" {
+  count = var.create_vpc ? 1 : 0
+
+  name        = "bus-simulator-vpc-link-sg"
+  description = "Security group for VPC Link to MCP server"
+  vpc_id      = aws_vpc.main[0].id
+
+  # Allow all outbound traffic to MCP server
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = [var.vpc_cidr]
+    description = "Allow traffic to MCP server in VPC"
+  }
+
+  tags = merge(var.tags, {
+    Name = "bus-simulator-vpc-link-sg"
+  })
+}
+
+# Update MCP server security group to allow traffic from VPC Link
+resource "aws_security_group_rule" "mcp_from_vpc_link" {
+  count = var.create_vpc ? 1 : 0
+
+  type                     = "ingress"
+  from_port                = 8080
+  to_port                  = 8080
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.vpc_link[0].id
+  security_group_id        = aws_security_group.mcp_server[0].id
+  description              = "Allow traffic from VPC Link"
+}
+
+# CloudWatch log group for MCP server
+resource "aws_cloudwatch_log_group" "mcp_server" {
+  name              = "/ecs/mcp-server"
+  retention_in_days = 30
+
+  tags = var.tags
+}
+
+# VPC Endpoints for private communication with AWS services
+# These endpoints allow the MCP server to communicate with AWS services
+# without traffic leaving the AWS network, improving security and performance
+
+# VPC Endpoint for Secrets Manager
+resource "aws_vpc_endpoint" "secrets_manager" {
+  count = var.create_vpc && var.enable_vpc_endpoints ? 1 : 0
+
+  vpc_id              = aws_vpc.main[0].id
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.secretsmanager"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
+  private_dns_enabled = true
+
+  tags = merge(var.tags, {
+    Name = "bus-simulator-secrets-manager-endpoint"
+  })
+}
+
+# VPC Endpoint for CloudWatch Logs
+resource "aws_vpc_endpoint" "logs" {
+  count = var.create_vpc && var.enable_vpc_endpoints ? 1 : 0
+
+  vpc_id              = aws_vpc.main[0].id
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.logs"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
+  private_dns_enabled = true
+
+  tags = merge(var.tags, {
+    Name = "bus-simulator-logs-endpoint"
+  })
+}
+
+# VPC Endpoint for Timestream (Ingest)
+resource "aws_vpc_endpoint" "timestream_ingest" {
+  count = var.create_vpc && var.enable_vpc_endpoints ? 1 : 0
+
+  vpc_id              = aws_vpc.main[0].id
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.timestream.ingest-cell1"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
+  private_dns_enabled = true
+
+  tags = merge(var.tags, {
+    Name = "bus-simulator-timestream-ingest-endpoint"
+  })
+}
+
+# VPC Endpoint for Timestream (Query)
+resource "aws_vpc_endpoint" "timestream_query" {
+  count = var.create_vpc && var.enable_vpc_endpoints ? 1 : 0
+
+  vpc_id              = aws_vpc.main[0].id
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.timestream.query-cell1"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
+  private_dns_enabled = true
+
+  tags = merge(var.tags, {
+    Name = "bus-simulator-timestream-query-endpoint"
+  })
+}
+
+# Security group for VPC endpoints
+resource "aws_security_group" "vpc_endpoints" {
+  count = var.create_vpc && var.enable_vpc_endpoints ? 1 : 0
+
+  name        = "bus-simulator-vpc-endpoints-sg"
+  description = "Security group for VPC endpoints (Secrets Manager, Timestream, CloudWatch Logs)"
+  vpc_id      = aws_vpc.main[0].id
+
+  # Allow inbound HTTPS traffic from VPC CIDR
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "Allow HTTPS from VPC for AWS service access"
+  }
+
+  tags = merge(var.tags, {
+    Name = "bus-simulator-vpc-endpoints-sg"
+  })
+}
+
+# Data source for current region
+data "aws_region" "current" {}

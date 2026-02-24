@@ -92,3 +92,57 @@ output "budget_alert_sns_topic" {
   description = "ARN of the SNS topic for budget alerts"
   value       = module.cost_management.sns_topic_arn
 }
+
+# MCP Server outputs
+output "mcp_server_service_name" {
+  description = "Name of the MCP server ECS service"
+  value       = module.mcp_server.service_name
+}
+
+output "mcp_server_task_definition_arn" {
+  description = "ARN of the MCP server task definition"
+  value       = module.mcp_server.task_definition_arn
+}
+
+output "mcp_server_log_group" {
+  description = "CloudWatch log group for MCP server"
+  value       = module.supporting.mcp_log_group_name
+}
+
+# MCP API Gateway outputs
+output "mcp_api_endpoint" {
+  description = "MCP Server HTTP API Gateway endpoint URL"
+  value       = module.mcp_server.api_endpoint
+}
+
+output "mcp_api_id" {
+  description = "MCP Server HTTP API Gateway ID"
+  value       = module.mcp_server.api_id
+}
+
+# VPC Endpoints outputs
+output "vpc_endpoints_enabled" {
+  description = "Whether VPC endpoints are enabled for private AWS service communication"
+  value       = var.enable_vpc_endpoints
+}
+
+output "secrets_manager_endpoint_id" {
+  description = "ID of the Secrets Manager VPC endpoint (if enabled)"
+  value       = module.supporting.secrets_manager_endpoint_id
+}
+
+output "logs_endpoint_id" {
+  description = "ID of the CloudWatch Logs VPC endpoint (if enabled)"
+  value       = module.supporting.logs_endpoint_id
+}
+
+output "timestream_ingest_endpoint_id" {
+  description = "ID of the Timestream Ingest VPC endpoint (if enabled)"
+  value       = module.supporting.timestream_ingest_endpoint_id
+}
+
+output "timestream_query_endpoint_id" {
+  description = "ID of the Timestream Query VPC endpoint (if enabled)"
+  value       = module.supporting.timestream_query_endpoint_id
+}
+

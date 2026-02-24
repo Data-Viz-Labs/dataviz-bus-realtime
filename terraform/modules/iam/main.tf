@@ -270,3 +270,73 @@ resource "aws_iam_role_policy_attachment" "apigateway_cloudwatch" {
 resource "aws_api_gateway_account" "main" {
   cloudwatch_role_arn = aws_iam_role.apigateway_cloudwatch.arn
 }
+
+# MCP Server task role
+resource "aws_iam_role" "mcp_task" {
+  name = "bus-simulator-mcp-task"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = var.tags
+}
+
+# MCP Server task policy - Timestream read access
+resource "aws_iam_role_policy" "mcp_timestream_read" {
+  name = "timestream-read-access"
+  role = aws_iam_role.mcp_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "timestream:DescribeEndpoints"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "timestream:Select",
+          "timestream:DescribeTable",
+          "timestream:ListMeasures"
+        ]
+        Resource = concat(
+          [var.timestream_database_arn],
+          var.timestream_table_arns
+        )
+      }
+    ]
+  })
+}
+
+# MCP Server task policy - Secrets Manager read access
+resource "aws_iam_role_policy" "mcp_secrets_read" {
+  name = "secrets-manager-read-access"
+  role = aws_iam_role.mcp_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = var.api_key_secret_arn
+      }
+    ]
+  })
+}

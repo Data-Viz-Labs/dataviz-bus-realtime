@@ -86,10 +86,10 @@ resource "aws_iam_role_policy_attachment" "authorizer_logs" {
 
 # REST API Gateway Authorizer
 resource "aws_api_gateway_authorizer" "rest" {
-  name        = "rest-api-key-authorizer"
-  rest_api_id = aws_api_gateway_rest_api.main.id
+  name           = "rest-api-key-authorizer"
+  rest_api_id    = aws_api_gateway_rest_api.main.id
   authorizer_uri = aws_lambda_function.rest_authorizer.invoke_arn
-  type        = "REQUEST"
+  type           = "REQUEST"
 
   # Cache authorization results for 5 minutes
   authorizer_result_ttl_in_seconds = 300

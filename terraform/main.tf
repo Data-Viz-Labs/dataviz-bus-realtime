@@ -39,6 +39,7 @@ module "iam" {
   dynamodb_table_arn      = module.supporting.dynamodb_table_arn
   config_bucket_arn       = module.supporting.config_bucket_arn
   ecr_repository_arn      = module.fargate.ecr_repository_arn
+  api_key_secret_arn      = module.api_gateway.api_key_secret_arn
 
   tags = var.tags
 }
@@ -90,8 +91,9 @@ module "eventbridge" {
 module "supporting" {
   source = "./modules/supporting"
 
-  create_vpc = var.create_vpc
-  vpc_cidr   = var.vpc_cidr
+  create_vpc           = var.create_vpc
+  vpc_cidr             = var.vpc_cidr
+  enable_vpc_endpoints = var.enable_vpc_endpoints
 
   tags = var.tags
 }
@@ -111,4 +113,42 @@ module "cost_management" {
   budget_alert_emails  = var.budget_alert_emails
 
   tags = var.tags
+}
+
+# MCP Server (Model Context Protocol server for programmatic data access)
+module "mcp_server" {
+  source = "./modules/mcp_server"
+
+  ecs_cluster_id           = module.fargate.cluster_id
+  ecs_execution_role_arn   = module.iam.ecs_execution_role_arn
+  ecr_repository_url       = module.fargate.ecr_repository_url
+  timestream_database_name = module.timestream.database_name
+  api_key_secret_id        = module.api_gateway.api_key_secret_id
+  private_subnet_ids       = module.supporting.private_subnet_ids
+  security_group_id        = module.supporting.mcp_security_group_id
+  log_group_name           = module.supporting.mcp_log_group_name
+
+  # VPC and API Gateway configuration
+  vpc_id                        = module.supporting.vpc_id
+  vpc_link_security_group_id    = module.supporting.vpc_link_security_group_id
+  rest_authorizer_invoke_arn    = module.api_gateway.rest_authorizer_arn
+  rest_authorizer_function_name = "bus-simulator-rest-authorizer"
+
+  # CORS configuration
+  cors_allowed_origins = var.mcp_cors_allowed_origins
+
+  # Resource limits appropriate for MCP workload
+  cpu    = var.mcp_cpu
+  memory = var.mcp_memory
+
+  # Logging configuration
+  log_level = var.mcp_log_level
+
+  tags = var.tags
+
+  # Dependencies - deploy after Timestream and Secrets Manager
+  depends_on = [
+    module.timestream,
+    module.api_gateway # API Gateway module creates the Secrets Manager secret
+  ]
 }

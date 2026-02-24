@@ -17,3 +17,10 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "enable_vpc_endpoints" {
+  description = "Whether to create VPC endpoints for private communication with AWS services (Secrets Manager, Timestream, CloudWatch Logs)"
+  type        = bool
+  default     = true
+}
+

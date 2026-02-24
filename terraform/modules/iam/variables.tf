@@ -35,3 +35,8 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "api_key_secret_arn" {
+  description = "ARN of the Secrets Manager secret for API key"
+  type        = string
+}

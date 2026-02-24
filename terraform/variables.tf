@@ -51,3 +51,35 @@ variable "budget_alert_emails" {
   type        = list(string)
   default     = []
 }
+
+# MCP Server configuration
+variable "mcp_cpu" {
+  description = "CPU units for MCP server task (256 = 0.25 vCPU, 512 = 0.5 vCPU, 1024 = 1 vCPU)"
+  type        = string
+  default     = "512"
+}
+
+variable "mcp_memory" {
+  description = "Memory for MCP server task in MB"
+  type        = string
+  default     = "1024"
+}
+
+variable "mcp_log_level" {
+  description = "Log level for MCP server (DEBUG, INFO, WARNING, ERROR)"
+  type        = string
+  default     = "INFO"
+}
+
+variable "mcp_cors_allowed_origins" {
+  description = "List of allowed origins for CORS on MCP API Gateway"
+  type        = list(string)
+  default     = ["*"]
+}
+
+variable "enable_vpc_endpoints" {
+  description = "Whether to create VPC endpoints for private communication with AWS services (Secrets Manager, Timestream, CloudWatch Logs)"
+  type        = bool
+  default     = true
+}
+
