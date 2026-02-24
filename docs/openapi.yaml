@@ -1,0 +1,664 @@
+openapi: 3.0.3
+info:
+  title: Madrid Bus Real-Time Simulator API
+  description: |
+    The Madrid Bus Real-Time Simulator provides REST and WebSocket APIs for accessing 
+    simulated bus operation data for Madrid Centro's EMT bus system. The system generates 
+    temporally consistent data including people counts at bus stops, internal sensor readings, 
+    and real-time bus positions.
+    
+    ## Authentication
+    
+    All API requests require two headers:
+    - `x-api-key`: Your API key (provided by system administrators)
+    - `x-group-name`: Your group/team identifier for tracking purposes
+    
+    WebSocket connections require these as query parameters instead:
+    - `api_key`: Your API key
+    - `group_name`: Your group/team identifier
+    
+  version: 1.0.0
+  contact:
+    name: Madrid Bus Simulator Support
+    url: https://github.com/your-org/madrid-bus-simulator
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://{api-id}.execute-api.{region}.amazonaws.com
+    description: Production API Gateway
+    variables:
+      api-id:
+        default: your-api-id
+        description: API Gateway ID from deployment
+      region:
+        default: eu-west-1
+        description: AWS region (eu-west-1 or eu-central-1)
+
+security:
+  - ApiKeyAuth: []
+    GroupNameAuth: []
+
+tags:
+  - name: People Count
+    description: Query people count at bus stops
+  - name: Sensors
+    description: Query sensor data from buses and stops
+  - name: Bus Position
+    description: Query bus positions and real-time updates
+
+paths:
+  /people-count/{stop_id}:
+    get:
+      tags:
+        - People Count
+      summary: Get people count at a bus stop
+      description: |
+        Retrieve the number of people waiting at a specific bus stop. 
+        Supports both latest data and historical queries.
+      operationId: getPeopleCount
+      parameters:
+        - name: stop_id
+          in: path
+          required: true
+          description: Bus stop identifier (e.g., S001, S002)
+          schema:
+            type: string
+            pattern: '^S[0-9]{3}$'
+            example: S001
+        - name: mode
+          in: query
+          description: Query mode for latest data
+          schema:
+            type: string
+            enum: [latest]
+            example: latest
+        - name: timestamp
+          in: query
+          description: ISO 8601 timestamp for historical data query
+          schema:
+            type: string
+            format: date-time
+            example: '2026-02-22T10:00:00Z'
+      responses:
+        '200':
+          description: Successful response with people count data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeopleCountResponse'
+              examples:
+                latest:
+                  summary: Latest people count
+                  value:
+                    stop_id: S001
+                    time: '2026-02-22T10:30:00Z'
+                    count: 15
+                    line_ids: 'L1,L2'
+                historical:
+                  summary: Historical people count
+                  value:
+                    stop_id: S001
+                    time: '2026-02-22T10:00:00Z'
+                    count: 8
+                    line_ids: 'L1,L2'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /sensors/{entity_type}/{entity_id}:
+    get:
+      tags:
+        - Sensors
+      summary: Get sensor data from a bus or stop
+      description: |
+        Retrieve sensor readings including temperature, humidity, and for buses: 
+        CO2 levels and door status. Supports both latest and historical queries.
+      operationId: getSensorData
+      parameters:
+        - name: entity_type
+          in: path
+          required: true
+          description: Type of entity (bus or stop)
+          schema:
+            type: string
+            enum: [bus, stop]
+            example: bus
+        - name: entity_id
+          in: path
+          required: true
+          description: Entity identifier (e.g., B001 for buses, S001 for stops)
+          schema:
+            type: string
+            pattern: '^[BS][0-9]{3}$'
+            example: B001
+        - name: mode
+          in: query
+          description: Query mode for latest data
+          schema:
+            type: string
+            enum: [latest]
+            example: latest
+        - name: timestamp
+          in: query
+          description: ISO 8601 timestamp for historical data query
+          schema:
+            type: string
+            format: date-time
+            example: '2026-02-22T10:00:00Z'
+      responses:
+        '200':
+          description: Successful response with sensor data
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/BusSensorResponse'
+                  - $ref: '#/components/schemas/StopSensorResponse'
+              examples:
+                bus_latest:
+                  summary: Latest bus sensor data
+                  value:
+                    entity_id: B001
+                    entity_type: bus
+                    time: '2026-02-22T10:30:00Z'
+                    temperature: 22.5
+                    humidity: 65.0
+                    co2_level: 850
+                    door_status: closed
+                stop_latest:
+                  summary: Latest stop sensor data
+                  value:
+                    entity_id: S001
+                    entity_type: stop
+                    time: '2026-02-22T10:30:00Z'
+                    temperature: 18.3
+                    humidity: 70.2
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /bus-position/{bus_id}:
+    get:
+      tags:
+        - Bus Position
+      summary: Get position of a specific bus
+      description: |
+        Retrieve the current or historical position of a bus on its route, 
+        including coordinates, passenger count, and next stop information.
+      operationId: getBusPosition
+      parameters:
+        - name: bus_id
+          in: path
+          required: true
+          description: Bus identifier (e.g., B001, B002)
+          schema:
+            type: string
+            pattern: '^B[0-9]{3}$'
+            example: B001
+        - name: mode
+          in: query
+          description: Query mode for latest data
+          schema:
+            type: string
+            enum: [latest]
+            example: latest
+        - name: timestamp
+          in: query
+          description: ISO 8601 timestamp for historical data query
+          schema:
+            type: string
+            format: date-time
+            example: '2026-02-22T10:00:00Z'
+      responses:
+        '200':
+          description: Successful response with bus position data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusPositionResponse'
+              examples:
+                latest:
+                  summary: Latest bus position
+                  value:
+                    bus_id: B001
+                    line_id: L1
+                    time: '2026-02-22T10:30:00Z'
+                    latitude: 40.4657
+                    longitude: -3.6886
+                    passenger_count: 35
+                    next_stop_id: S002
+                    distance_to_next_stop: 250.5
+                    speed: 25.0
+                    direction: 0
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /bus-position/line/{line_id}:
+    get:
+      tags:
+        - Bus Position
+      summary: Get positions of all buses on a line
+      description: |
+        Retrieve the current positions of all buses operating on a specific line.
+      operationId: getLineBuses
+      parameters:
+        - name: line_id
+          in: path
+          required: true
+          description: Line identifier (e.g., L1, L2)
+          schema:
+            type: string
+            pattern: '^L[0-9]+$'
+            example: L1
+        - name: mode
+          in: query
+          required: true
+          description: Query mode (must be 'latest')
+          schema:
+            type: string
+            enum: [latest]
+            example: latest
+      responses:
+        '200':
+          description: Successful response with all buses on the line
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LineBusesResponse'
+              examples:
+                line_buses:
+                  summary: All buses on line L1
+                  value:
+                    line_id: L1
+                    buses:
+                      - bus_id: B001
+                        time: '2026-02-22T10:30:00Z'
+                        latitude: 40.4657
+                        longitude: -3.6886
+                        passenger_count: 35
+                        next_stop_id: S002
+                        distance_to_next_stop: 250.5
+                        speed: 25.0
+                        direction: 0
+                      - bus_id: B002
+                        time: '2026-02-22T10:30:00Z'
+                        latitude: 40.4500
+                        longitude: -3.6900
+                        passenger_count: 42
+                        next_stop_id: S005
+                        distance_to_next_stop: 180.0
+                        speed: 30.0
+                        direction: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: API key for authentication (provided by administrators)
+    GroupNameAuth:
+      type: apiKey
+      in: header
+      name: x-group-name
+      description: Group/team identifier for request tracking
+
+  schemas:
+    PeopleCountResponse:
+      type: object
+      required:
+        - stop_id
+        - time
+        - count
+        - line_ids
+      properties:
+        stop_id:
+          type: string
+          description: Bus stop identifier
+          example: S001
+        time:
+          type: string
+          format: date-time
+          description: Timestamp of the data point
+          example: '2026-02-22T10:30:00Z'
+        count:
+          type: integer
+          minimum: 0
+          description: Number of people waiting at the stop
+          example: 15
+        line_ids:
+          type: string
+          description: Comma-separated list of line IDs serving this stop
+          example: 'L1,L2'
+
+    BusSensorResponse:
+      type: object
+      required:
+        - entity_id
+        - entity_type
+        - time
+        - temperature
+        - humidity
+        - co2_level
+        - door_status
+      properties:
+        entity_id:
+          type: string
+          description: Bus identifier
+          example: B001
+        entity_type:
+          type: string
+          enum: [bus]
+          description: Entity type (always 'bus' for this schema)
+          example: bus
+        time:
+          type: string
+          format: date-time
+          description: Timestamp of the sensor reading
+          example: '2026-02-22T10:30:00Z'
+        temperature:
+          type: number
+          format: float
+          description: Temperature in Celsius
+          example: 22.5
+        humidity:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          description: Relative humidity percentage
+          example: 65.0
+        co2_level:
+          type: integer
+          minimum: 0
+          description: CO2 concentration in parts per million (ppm)
+          example: 850
+        door_status:
+          type: string
+          enum: [open, closed]
+          description: Current door status
+          example: closed
+
+    StopSensorResponse:
+      type: object
+      required:
+        - entity_id
+        - entity_type
+        - time
+        - temperature
+        - humidity
+      properties:
+        entity_id:
+          type: string
+          description: Stop identifier
+          example: S001
+        entity_type:
+          type: string
+          enum: [stop]
+          description: Entity type (always 'stop' for this schema)
+          example: stop
+        time:
+          type: string
+          format: date-time
+          description: Timestamp of the sensor reading
+          example: '2026-02-22T10:30:00Z'
+        temperature:
+          type: number
+          format: float
+          description: Temperature in Celsius
+          example: 18.3
+        humidity:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          description: Relative humidity percentage
+          example: 70.2
+
+    BusPositionResponse:
+      type: object
+      required:
+        - bus_id
+        - line_id
+        - time
+        - latitude
+        - longitude
+        - passenger_count
+        - next_stop_id
+        - distance_to_next_stop
+        - speed
+        - direction
+      properties:
+        bus_id:
+          type: string
+          description: Bus identifier
+          example: B001
+        line_id:
+          type: string
+          description: Line identifier
+          example: L1
+        time:
+          type: string
+          format: date-time
+          description: Timestamp of the position data
+          example: '2026-02-22T10:30:00Z'
+        latitude:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+          description: Latitude coordinate
+          example: 40.4657
+        longitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+          description: Longitude coordinate
+          example: -3.6886
+        passenger_count:
+          type: integer
+          minimum: 0
+          description: Current number of passengers on the bus
+          example: 35
+        next_stop_id:
+          type: string
+          description: Identifier of the next stop on the route
+          example: S002
+        distance_to_next_stop:
+          type: number
+          format: float
+          minimum: 0
+          description: Distance to next stop in meters
+          example: 250.5
+        speed:
+          type: number
+          format: float
+          minimum: 0
+          description: Current speed in km/h
+          example: 25.0
+        direction:
+          type: integer
+          enum: [0, 1]
+          description: Route direction (0=outbound, 1=inbound/return)
+          example: 0
+
+    LineBusesResponse:
+      type: object
+      required:
+        - line_id
+        - buses
+      properties:
+        line_id:
+          type: string
+          description: Line identifier
+          example: L1
+        buses:
+          type: array
+          description: Array of bus positions on this line
+          items:
+            type: object
+            required:
+              - bus_id
+              - time
+              - latitude
+              - longitude
+              - passenger_count
+              - next_stop_id
+              - distance_to_next_stop
+              - speed
+              - direction
+            properties:
+              bus_id:
+                type: string
+                example: B001
+              time:
+                type: string
+                format: date-time
+                example: '2026-02-22T10:30:00Z'
+              latitude:
+                type: number
+                format: double
+                example: 40.4657
+              longitude:
+                type: number
+                format: double
+                example: -3.6886
+              passenger_count:
+                type: integer
+                minimum: 0
+                example: 35
+              next_stop_id:
+                type: string
+                example: S002
+              distance_to_next_stop:
+                type: number
+                format: float
+                example: 250.5
+              speed:
+                type: number
+                format: float
+                example: 25.0
+              direction:
+                type: integer
+                enum: [0, 1]
+                example: 0
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Error type
+          example: NotFound
+        message:
+          type: string
+          description: Human-readable error message
+          example: Stop S999 not found
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            missing_parameter:
+              summary: Missing required parameter
+              value:
+                error: BadRequest
+                message: "Must specify 'mode=latest' or 'timestamp' parameter"
+            invalid_format:
+              summary: Invalid parameter format
+              value:
+                error: BadRequest
+                message: Invalid timestamp format. Use ISO 8601 format.
+
+    Unauthorized:
+      description: Unauthorized - missing or invalid API key or group name
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            missing_api_key:
+              summary: Missing API key
+              value:
+                error: Unauthorized
+                message: Missing x-api-key header
+            invalid_api_key:
+              summary: Invalid API key
+              value:
+                error: Unauthorized
+                message: Invalid API key
+            missing_group_name:
+              summary: Missing group name
+              value:
+                error: Unauthorized
+                message: "Missing x-group-name header"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            stop_not_found:
+              summary: Stop not found
+              value:
+                error: NotFound
+                message: Stop S999 not found
+            bus_not_found:
+              summary: Bus not found
+              value:
+                error: NotFound
+                message: Bus B999 not found
+            entity_not_found:
+              summary: Entity not found
+              value:
+                error: NotFound
+                message: Entity not found
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            server_error:
+              summary: Internal server error
+              value:
+                error: InternalServerError
+                message: An unexpected error occurred. Please try again later.

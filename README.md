@@ -35,6 +35,13 @@ The system follows a producer-consumer pattern with three main layers:
   - WebSocket Handler: Manage real-time subscriptions and broadcasts
   - WebSocket Authorizer: Validate API keys for WebSocket connections
 
+- **MCP Server (ECS Fargate)**:
+  - Programmatic access to Timestream data via Model Context Protocol
+  - Deployed on ECS in private subnets with API Gateway HTTP API access
+  - Five tools for querying people count, sensors, bus positions, and time ranges
+  - Authentication via x-api-key and x-group-name headers (same as REST APIs)
+  - CloudWatch Logs at `/ecs/mcp-server`
+
 - **Fargate Services**:
   - People Count Feeder: Generates passenger arrival/departure data
   - Sensors Feeder: Generates environmental sensor readings
@@ -212,6 +219,45 @@ ws.onmessage = (event) => {
 };
 ```
 
+**MCP Server API:**
+
+The MCP server provides programmatic access to time series data via Model Context Protocol. It's deployed on ECS Fargate with external access through API Gateway.
+
+```bash
+# Get API endpoint and key
+cd terraform
+MCP_ENDPOINT=$(terraform output -raw mcp_api_endpoint)
+API_KEY=$(aws secretsmanager get-secret-value \
+  --secret-id bus-simulator/api-key \
+  --query SecretString --output text | jq -r '.api_key')
+
+# List available tools
+curl -X POST "${MCP_ENDPOINT}/mcp/list-tools" \
+  -H "x-api-key: ${API_KEY}" \
+  -H "x-group-name: your-group" \
+  -H "Content-Type: application/json"
+
+# Query people count
+curl -X POST "${MCP_ENDPOINT}/mcp/call-tool" \
+  -H "x-api-key: ${API_KEY}" \
+  -H "x-group-name: your-group" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tool": "query_people_count",
+    "arguments": {
+      "stop_id": "S001",
+      "mode": "latest"
+    }
+  }'
+```
+
+See [mcp_server/README.md](mcp_server/README.md) for complete MCP server documentation including:
+- All five available tools (people count, sensors, bus position, line buses, time range)
+- Authentication requirements
+- ECS deployment architecture
+- CloudWatch Logs access
+- Troubleshooting guide
+
 ## Development
 
 ### Running Tests
@@ -247,7 +293,7 @@ make package-lambda LAMBDA=people_count_api
 make build-feeders
 
 # Test image imports
-./docker/test_images.sh
+./scripts/test_images.sh
 ```
 
 ## Deployment Timeline
@@ -281,6 +327,72 @@ The verification script checks:
 
 See [docs/VERIFICATION_SCRIPT.md](docs/VERIFICATION_SCRIPT.md) for detailed documentation.
 
+## Testing
+
+The project includes three levels of testing following the test pyramid approach:
+
+### Quick Start
+
+```bash
+# Run all tests
+make test-all
+
+# Run specific test level
+make test-unit      # Unit tests (local, no AWS)
+make test-int       # Integration tests (Python + AWS)
+make test-e2e       # End-to-end tests (API shell scripts)
+```
+
+### Test Levels
+
+**1. Unit Tests (Local, No AWS)**
+- Fast execution (< 1 minute)
+- Tests business logic, data models, utilities
+- No AWS credentials required
+- Uses mocks for external dependencies
+
+```bash
+make test-unit
+```
+
+**2. Integration Tests (Python + AWS)**
+- Moderate execution (5-10 minutes)
+- Tests AWS service interactions
+- Requires AWS credentials and deployed infrastructure
+- Tests Timestream, Secrets Manager, Lambda, MCP server
+
+```bash
+make test-int
+```
+
+**3. End-to-End Tests (Shell Scripts)**
+- Complete user workflows (10-15 minutes)
+- Tests all public APIs via curl
+- Automatic configuration from Terraform outputs
+- Tests REST APIs, WebSocket, MCP server, authentication
+
+```bash
+make test-e2e
+```
+
+### Automatic Configuration
+
+E2E tests are fully autonomous and retrieve configuration automatically:
+- API key from Secrets Manager
+- API endpoints from Terraform outputs
+- AWS region from CLI configuration
+
+No manual configuration needed! Just run:
+
+```bash
+cd tests/api
+./test_people_count_latest.sh
+./test_mcp_health.sh
+./test_mcp_auth.sh
+```
+
+See [tests/TESTING_STRATEGY.md](tests/TESTING_STRATEGY.md) for detailed testing documentation.
+
 ## Monitoring
 
 ### CloudWatch Dashboards
@@ -290,12 +402,29 @@ Monitor system health through CloudWatch:
 - API Gateway metrics (requests, latency, errors)
 - Lambda metrics (invocations, duration, errors)
 - Timestream metrics (write throughput, query latency)
+- MCP server metrics (CPU, memory, task count, health checks)
 
 ### Logs
 
 All services log to CloudWatch Logs:
 - Lambda functions: `/aws/lambda/bus-simulator-*`
 - Fargate services: `/ecs/*-feeder`
+- MCP server: `/ecs/mcp-server`
+
+**View MCP server logs:**
+```bash
+# Tail logs in real-time
+aws logs tail /ecs/mcp-server --follow --region eu-west-1
+
+# Filter by group name
+aws logs filter-log-events \
+  --log-group-name /ecs/mcp-server \
+  --filter-pattern "your-group-name" \
+  --region eu-west-1
+
+# Get last 100 log events
+aws logs tail /ecs/mcp-server --since 1h --region eu-west-1
+```
 
 ## Cost Estimation
 
@@ -304,11 +433,14 @@ Approximate monthly costs for 7-day operation (5 days pre-hackathon + 2 days hac
 - API Gateway: $10-20
 - Lambda: $5-10
 - Timestream: $50-100
-- Fargate: $30-50
+- Fargate (feeders): $30-50
+- Fargate (MCP server): $10-15
 - EventBridge: $5-10
 - Amazon Location: $5
 
-**Total: ~$105-195 for 7 days**
+**Total: ~$115-210 for 7 days**
+
+**Note:** MCP server costs depend on usage. The estimate assumes moderate query load (10-50 queries/min).
 
 ## Cleanup
 
@@ -353,6 +485,61 @@ resource "aws_lambda_function" "people_count_api" {
   ...
 }
 ```
+
+### MCP Server Issues
+
+#### MCP Server Not Responding
+
+1. Check ECS service status:
+   ```bash
+   aws ecs describe-services \
+     --cluster bus-simulator-cluster \
+     --services mcp-server \
+     --region eu-west-1
+   ```
+
+2. View MCP server logs:
+   ```bash
+   aws logs tail /ecs/mcp-server --follow --region eu-west-1
+   ```
+
+3. Verify API Gateway endpoint:
+   ```bash
+   cd terraform
+   terraform output mcp_api_endpoint
+   ```
+
+#### MCP Authentication Errors (401)
+
+1. Verify API key exists:
+   ```bash
+   aws secretsmanager get-secret-value --secret-id bus-simulator/api-key --region eu-west-1
+   ```
+
+2. Ensure both headers are present:
+   - `x-api-key`: API key from Secrets Manager
+   - `x-group-name`: Any string value for tracking
+
+3. Check authorizer logs:
+   ```bash
+   aws logs tail /aws/lambda/bus-simulator-rest-authorizer --follow --region eu-west-1
+   ```
+
+#### MCP Server Returns 502 Bad Gateway
+
+1. Check VPC Link status:
+   ```bash
+   cd terraform
+   aws apigatewayv2 get-vpc-link \
+     --vpc-link-id $(terraform output -raw mcp_vpc_link_id) \
+     --region eu-west-1
+   ```
+
+2. Verify security group allows traffic from VPC Link to ECS
+
+3. Check ECS task is running and healthy
+
+For detailed MCP server troubleshooting, see [mcp_server/README.md](mcp_server/README.md#troubleshooting).
 
 ## Contributing
 
@@ -423,7 +610,7 @@ The system uses AWS services:
 
 - AWS Account
 - Terraform >= 1.0
-- Docker >= 20.10
+- Podman >= 4.0
 - Python >= 3.11
 - Make
 

@@ -54,14 +54,14 @@ export LOG_LEVEL=DEBUG
 python src/feeders/people_count_feeder.py
 ```
 
-### Running in Docker
+### Running in Podman
 
 ```bash
-# Build the Docker image
-docker build -t people-count-feeder -f docker/Dockerfile.people_count .
+# Build the Podman image
+podman build -t people-count-feeder -f docker/Dockerfile.people_count .
 
 # Run the container
-docker run -e TIMESTREAM_DATABASE=bus_simulator \
+podman run -e TIMESTREAM_DATABASE=bus_simulator \
            -e TIMESTREAM_TABLE=people_count \
            -e AWS_REGION=eu-west-1 \
            -e AWS_ACCESS_KEY_ID=your_key \
@@ -202,11 +202,11 @@ export LOG_LEVEL=DEBUG
 python src/feeders/bus_position_feeder.py
 ```
 
-### Running in Docker
+### Running in Podman
 
 ```bash
-# Build the Docker image
-docker build -t bus-position-feeder -f docker/Dockerfile.bus_position .
+# Build the Podman image
+podman build -t bus-position-feeder -f docker/Dockerfile.bus_position .
 
 # Run the container
 docker run -e TIMESTREAM_DATABASE=bus_simulator \
