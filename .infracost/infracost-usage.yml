@@ -1,0 +1,48 @@
+version: 0.1
+
+resource_usage:
+  # API Gateway usage estimates
+  module.api_gateway.aws_apigatewayv2_api.bus_simulator:
+    monthly_requests: 1000000  # 1M requests per month
+  
+  # Lambda invocations
+  module.api_gateway.aws_lambda_function.people_count_api:
+    monthly_requests: 300000
+    request_duration_ms: 200
+  
+  module.api_gateway.aws_lambda_function.sensors_api:
+    monthly_requests: 300000
+    request_duration_ms: 200
+  
+  module.api_gateway.aws_lambda_function.bus_position_api:
+    monthly_requests: 400000
+    request_duration_ms: 250
+  
+  # Timestream usage
+  module.timestream.aws_timestreamwrite_table.people_count:
+    storage_gb: 10
+    write_requests: 500000
+    query_requests: 300000
+  
+  module.timestream.aws_timestreamwrite_table.sensor_data:
+    storage_gb: 15
+    write_requests: 800000
+    query_requests: 300000
+  
+  module.timestream.aws_timestreamwrite_table.bus_position:
+    storage_gb: 20
+    write_requests: 1000000
+    query_requests: 400000
+  
+  # Fargate tasks (running 24/7)
+  module.fargate.aws_ecs_service.people_count_feeder:
+    monthly_cpu_hours: 720  # 24 hours * 30 days
+    monthly_memory_gb_hours: 360  # 0.5 GB * 720 hours
+  
+  module.fargate.aws_ecs_service.sensors_feeder:
+    monthly_cpu_hours: 720
+    monthly_memory_gb_hours: 360
+  
+  module.fargate.aws_ecs_service.bus_position_feeder:
+    monthly_cpu_hours: 720
+    monthly_memory_gb_hours: 360

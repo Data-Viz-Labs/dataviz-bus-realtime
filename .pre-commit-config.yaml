@@ -1,0 +1,59 @@
+repos:
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.83.5
+    hooks:
+      - id: terraform_fmt
+        name: Terraform format
+        description: Rewrites all Terraform configuration files to canonical format
+        
+      - id: terraform_validate
+        name: Terraform validate
+        description: Validates all Terraform configuration files
+        
+      - id: terraform_docs
+        name: Terraform docs
+        description: Inserts output from terraform-docs into README.md
+        args:
+          - --args=--config=.terraform-docs.yml
+        
+      - id: terraform_tflint
+        name: Terraform lint
+        description: Validates all Terraform configuration files with TFLint
+  
+  - repo: local
+    hooks:
+      - id: infracost
+        name: Infracost cost estimate
+        description: Show cost estimate for Terraform changes
+        entry: bash -c 'infracost breakdown --path=terraform --format=table'
+        language: system
+        files: \.tf$
+        pass_filenames: false
+        
+      - id: infracost-diff
+        name: Infracost diff
+        description: Show cost diff for Terraform changes
+        entry: bash -c 'if git rev-parse --verify HEAD >/dev/null 2>&1; then infracost diff --path=terraform --format=table --compare-to=infracost-base.json || true; fi'
+        language: system
+        files: \.tf$
+        pass_filenames: false
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+        
+      - id: end-of-file-fixer
+        name: Fix end of files
+        
+      - id: check-yaml
+        name: Check YAML syntax
+        args: ['--safe']
+        
+      - id: check-json
+        name: Check JSON syntax
+        
+      - id: check-added-large-files
+        name: Check for large files
+        args: ['--maxkb=1000']

@@ -1,0 +1,7 @@
+version: 0.1
+
+projects:
+  - path: terraform
+    name: bus-simulator
+    terraform_workspace: default
+    usage_file: .infracost/infracost-usage.yml
