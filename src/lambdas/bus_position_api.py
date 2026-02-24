@@ -60,6 +60,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     Supports both latest data queries and historical queries at specific timestamps.
     Also supports querying all buses on a specific line.
     
+    Note: API key validation is handled by Custom Authorizer before reaching this function.
+    
     Args:
         event: API Gateway event containing path parameters and query string
         context: Lambda context object
@@ -71,7 +73,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         Single bus latest:
             {
                 'pathParameters': {'bus_id': 'B001'},
-                'queryStringParameters': {'mode': 'latest'}
+                'queryStringParameters': {'mode': 'latest'},
+                'requestContext': {
+                    'authorizer': {
+                        'group_name': 'team-alpha'
+                    }
+                }
             }
         
         Single bus historical:
@@ -88,9 +95,17 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             }
     """
     try:
+        # Extract and log group name for request tracking (Requirement 15.7)
+        request_context = event.get('requestContext', {})
+        authorizer_context = request_context.get('authorizer', {})
+        group_name = authorizer_context.get('group_name', 'unknown')
+        
         # Extract path parameters
         path_params = event.get('pathParameters', {})
         path = event.get('path', '')
+        
+        # Log group name for request tracking
+        logger.info(f"Request from group: {group_name}, path: {path}")
         
         # Extract query parameters
         query_params = event.get('queryStringParameters') or {}
@@ -333,7 +348,7 @@ def format_bus_position_response(row: Dict[str, Any]) -> Dict[str, Any]:
     response = {
         'bus_id': row.get('bus_id'),
         'line_id': row.get('line_id'),
-        'timestamp': row.get('time'),
+        'time': row.get('time'),
         'latitude': float(row.get('latitude', 0)) if row.get('latitude') else None,
         'longitude': float(row.get('longitude', 0)) if row.get('longitude') else None,
         'passenger_count': int(row.get('passenger_count', 0)) if row.get('passenger_count') else 0,

@@ -26,12 +26,14 @@ pip install -r "$PROJECT_ROOT/src/lambdas/requirements.txt" -t "$BUILD_DIR" --qu
 echo "Copying Lambda handler..."
 cp "$PROJECT_ROOT/src/lambdas/${LAMBDA_NAME}.py" "$BUILD_DIR/"
 
-# Copy common modules
-echo "Copying common modules..."
-mkdir -p "$BUILD_DIR/common"
-cp "$PROJECT_ROOT/src/common/__init__.py" "$BUILD_DIR/common/"
-cp "$PROJECT_ROOT/src/common/timestream_client.py" "$BUILD_DIR/common/"
-cp "$PROJECT_ROOT/src/common/models.py" "$BUILD_DIR/common/"
+# Copy common modules (not needed for authorizers)
+if [[ "$LAMBDA_NAME" != "authorizer_rest" && "$LAMBDA_NAME" != "authorizer_websocket" ]]; then
+    echo "Copying common modules..."
+    mkdir -p "$BUILD_DIR/common"
+    cp "$PROJECT_ROOT/src/common/__init__.py" "$BUILD_DIR/common/"
+    cp "$PROJECT_ROOT/src/common/timestream_client.py" "$BUILD_DIR/common/"
+    cp "$PROJECT_ROOT/src/common/models.py" "$BUILD_DIR/common/"
+fi
 
 # Create ZIP package
 echo "Creating ZIP package..."

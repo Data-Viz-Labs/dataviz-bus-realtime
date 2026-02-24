@@ -62,6 +62,56 @@ def print_info(text: str):
     print(f"{Colors.BLUE}ℹ {text}{Colors.RESET}")
 
 
+def get_api_key_from_secrets_manager(region: str, secret_id: str = 'bus-simulator/api-key') -> Optional[str]:
+    """
+    Retrieve API key from AWS Secrets Manager.
+    
+    Args:
+        region: AWS region
+        secret_id: Secrets Manager secret ID
+        
+    Returns:
+        API key value or None if not found
+    """
+    try:
+        client = boto3.client('secretsmanager', region_name=region)
+        response = client.get_secret_value(SecretId=secret_id)
+        secret_data = json.loads(response['SecretString'])
+        return secret_data['api_key']
+    except ClientError as e:
+        print_error(f"Error retrieving API key from Secrets Manager: {e}")
+        return None
+    except (KeyError, json.JSONDecodeError) as e:
+        print_error(f"Error parsing API key from Secrets Manager: {e}")
+        return None
+
+
+def get_api_key(region: str) -> Optional[str]:
+    """
+    Get API key from Secrets Manager (preferred) or Terraform outputs (fallback).
+    
+    Args:
+        region: AWS region
+        
+    Returns:
+        API key value or None if not found
+    """
+    # Try Secrets Manager first
+    api_key = get_api_key_from_secrets_manager(region)
+    if api_key:
+        print_info("Retrieved API key from Secrets Manager")
+        return api_key
+    
+    # Fallback to Terraform outputs
+    print_warning("Could not retrieve API key from Secrets Manager, trying Terraform outputs...")
+    api_key_value = get_terraform_output('api_key_value')
+    if api_key_value:
+        print_info("Retrieved API key from Terraform outputs")
+        return api_key_value
+    
+    return None
+
+
 def get_terraform_output(output_name: str, terraform_dir: str = "terraform") -> Optional[str]:
     """Get Terraform output value."""
     try:
@@ -294,18 +344,15 @@ def test_rest_api_endpoints(region: str, verbose: bool = False) -> Tuple[bool, s
     """
     print_header("Testing REST API Endpoints")
     
-    # Get API endpoint and keys from Terraform
+    # Get API endpoint and key
     rest_endpoint = get_terraform_output('api_gateway_rest_endpoint')
-    api_key_values = get_terraform_output_json('api_key_values')
+    api_key = get_api_key(region)
     
     if not rest_endpoint:
         return False, "Could not retrieve REST API endpoint from Terraform"
     
-    if not api_key_values or len(api_key_values) == 0:
-        return False, "Could not retrieve API keys from Terraform"
-    
-    # Use the first API key for testing
-    api_key = api_key_values[0]
+    if not api_key:
+        return False, "Could not retrieve API key from Secrets Manager or Terraform"
     
     print_info(f"REST API Endpoint: {rest_endpoint}")
     print_info(f"Using API key: {api_key[:8]}...")
@@ -350,9 +397,10 @@ def test_rest_api_endpoints(region: str, verbose: bool = False) -> Tuple[bool, s
         print_info(f"  URL: {endpoint['url']}")
         
         try:
-            # Create request with API key header
+            # Create request with API key and group name headers
             req = urllib.request.Request(endpoint['url'])
             req.add_header('x-api-key', api_key)
+            req.add_header('x-group-name', 'verification-script')
             
             # Make request
             with urllib.request.urlopen(req, timeout=10) as response:
@@ -442,16 +490,17 @@ def test_rest_api_authentication(region: str, verbose: bool = False) -> Tuple[bo
     
     test_url = f"{rest_endpoint}/people-count/S001?mode=latest"
     
-    # Test 1: Request without API key (should fail with 403)
+    # Test 1: Request without API key (should fail with 401)
     print("\nTest 1: Request without API key")
     try:
         req = urllib.request.Request(test_url)
+        req.add_header('x-group-name', 'verification-script')
         with urllib.request.urlopen(req, timeout=10) as response:
             print_error("Request succeeded without API key (should have failed)")
             return False, "Authentication not enforced"
     except urllib.error.HTTPError as e:
-        if e.code == 403:
-            print_success("Request correctly rejected (403 Forbidden)")
+        if e.code in [401, 403]:
+            print_success(f"Request correctly rejected ({e.code})")
         else:
             print_warning(f"Request failed with unexpected status: {e.code}")
     except Exception as e:
@@ -463,33 +512,51 @@ def test_rest_api_authentication(region: str, verbose: bool = False) -> Tuple[bo
     try:
         req = urllib.request.Request(test_url)
         req.add_header('x-api-key', 'invalid-key-12345')
+        req.add_header('x-group-name', 'verification-script')
         with urllib.request.urlopen(req, timeout=10) as response:
             print_error("Request succeeded with invalid API key (should have failed)")
             return False, "Invalid API key accepted"
     except urllib.error.HTTPError as e:
-        if e.code == 403:
-            print_success("Request correctly rejected (403 Forbidden)")
+        if e.code in [401, 403]:
+            print_success(f"Request correctly rejected ({e.code})")
         else:
             print_warning(f"Request failed with unexpected status: {e.code}")
     except Exception as e:
         print_error(f"Unexpected error: {e}")
         return False, "Unexpected error testing invalid API key"
     
-    # Test 3: Request with valid API key (should succeed)
-    print("\nTest 3: Request with valid API key")
-    api_key_values = get_terraform_output_json('api_key_values')
-    if not api_key_values or len(api_key_values) == 0:
-        return False, "Could not retrieve API keys from Terraform"
-    
-    api_key = api_key_values[0]
-    print_info(f"Using API key: {api_key[:8]}...")
+    # Test 3: Request without group name (should fail with 401)
+    print("\nTest 3: Request without x-group-name header")
+    api_key = get_api_key(region)
+    if not api_key:
+        return False, "Could not retrieve API key"
     
     try:
         req = urllib.request.Request(test_url)
         req.add_header('x-api-key', api_key)
         with urllib.request.urlopen(req, timeout=10) as response:
+            print_error("Request succeeded without group name (should have failed)")
+            return False, "Group name validation not enforced"
+    except urllib.error.HTTPError as e:
+        if e.code in [401, 403]:
+            print_success(f"Request correctly rejected ({e.code})")
+        else:
+            print_warning(f"Request failed with unexpected status: {e.code}")
+    except Exception as e:
+        print_error(f"Unexpected error: {e}")
+        return False, "Unexpected error testing no group name"
+    
+    # Test 4: Request with valid API key and group name (should succeed)
+    print("\nTest 4: Request with valid API key and group name")
+    print_info(f"Using API key: {api_key[:8]}...")
+    
+    try:
+        req = urllib.request.Request(test_url)
+        req.add_header('x-api-key', api_key)
+        req.add_header('x-group-name', 'verification-script')
+        with urllib.request.urlopen(req, timeout=10) as response:
             if response.getcode() == 200:
-                print_success("Request succeeded with valid API key")
+                print_success("Request succeeded with valid API key and group name")
             else:
                 print_warning(f"Unexpected status code: {response.getcode()}")
     except urllib.error.HTTPError as e:
@@ -515,17 +582,15 @@ def test_websocket_connection(region: str, verbose: bool = False) -> Tuple[bool,
     """
     print_header("Testing WebSocket Connection")
     
-    # Get WebSocket endpoint and API key from Terraform
+    # Get WebSocket endpoint and API key
     ws_endpoint = get_terraform_output('api_gateway_websocket_endpoint')
-    api_key_values = get_terraform_output_json('api_key_values')
+    api_key = get_api_key(region)
     
     if not ws_endpoint:
         return False, "Could not retrieve WebSocket endpoint from Terraform"
     
-    if not api_key_values or len(api_key_values) == 0:
-        return False, "Could not retrieve API keys from Terraform"
-    
-    api_key = api_key_values[0]
+    if not api_key:
+        return False, "Could not retrieve API key from Secrets Manager or Terraform"
     
     print_info(f"WebSocket Endpoint: {ws_endpoint}")
     print_info(f"Using API key: {api_key[:8]}...")
@@ -545,7 +610,7 @@ def test_websocket_connection(region: str, verbose: bool = False) -> Tuple[bool,
     # Test 1: Connection without API key (should fail)
     print("\nTest 1: Connection without API key")
     try:
-        ws = websocket.create_connection(ws_url, timeout=5)
+        ws = websocket.create_connection(f"{ws_url}?group_name=verification-script", timeout=5)
         ws.close()
         print_error("Connection succeeded without API key (should have failed)")
         return False, "WebSocket auth not enforced"
@@ -555,17 +620,27 @@ def test_websocket_connection(region: str, verbose: bool = False) -> Tuple[bool,
     # Test 2: Connection with invalid API key (should fail)
     print("\nTest 2: Connection with invalid API key")
     try:
-        ws = websocket.create_connection(f"{ws_url}?api_key=invalid-key-12345", timeout=5)
+        ws = websocket.create_connection(f"{ws_url}?api_key=invalid-key-12345&group_name=verification-script", timeout=5)
         ws.close()
         print_error("Connection succeeded with invalid API key (should have failed)")
         return False, "Invalid WebSocket API key accepted"
     except Exception as e:
         print_success(f"Connection correctly rejected: {type(e).__name__}")
     
-    # Test 3: Connection with valid API key (should succeed)
-    print("\nTest 3: Connection with valid API key")
+    # Test 3: Connection without group name (should fail)
+    print("\nTest 3: Connection without group_name parameter")
     try:
         ws = websocket.create_connection(f"{ws_url}?api_key={api_key}", timeout=5)
+        ws.close()
+        print_error("Connection succeeded without group name (should have failed)")
+        return False, "WebSocket group name validation not enforced"
+    except Exception as e:
+        print_success(f"Connection correctly rejected: {type(e).__name__}")
+    
+    # Test 4: Connection with valid API key and group name (should succeed)
+    print("\nTest 4: Connection with valid API key and group name")
+    try:
+        ws = websocket.create_connection(f"{ws_url}?api_key={api_key}&group_name=verification-script", timeout=5)
         print_success("Connection established successfully")
         
         # Test subscription message

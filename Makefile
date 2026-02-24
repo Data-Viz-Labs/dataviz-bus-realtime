@@ -19,6 +19,12 @@ help:
 	@echo "  verify             - Run pre-hackathon verification checks"
 	@echo "  deploy             - Full deployment (build, push, apply, config)"
 	@echo "  destroy            - Destroy all infrastructure"
+	@echo "  infracost-check    - Run Infracost cost estimation"
+	@echo "  setup-hooks        - Install pre-commit hooks"
+	@echo "  check-costs        - Check current AWS costs and budget status"
+	@echo "  mcp-install        - Install MCP server dependencies"
+	@echo "  mcp-run            - Run MCP server"
+	@echo "  mcp-test           - Run MCP server tests"
 	@echo ""
 	@echo "Environment variables:"
 	@echo "  AWS_REGION    - AWS region (default: eu-west-1)"
@@ -26,6 +32,7 @@ help:
 	@echo "  OUTPUT         - Output file for export-keys (default: api_keys.txt)"
 	@echo "  FORMAT         - Output format for export-keys: text or json (default: text)"
 	@echo "  VERBOSE        - Enable verbose output for verify (default: false)"
+	@echo "  TIMESTREAM_DATABASE - Timestream database name for MCP server (default: bus_simulator)"
 
 init:
 	cd terraform && terraform init
@@ -101,3 +108,50 @@ destroy:
 	@echo "Destroying infrastructure..."
 	cd terraform && terraform destroy -var="aws_region=$(AWS_REGION)" -auto-approve
 	@echo "Infrastructure destroyed!"
+
+infracost-check:
+	@echo "Running Infracost cost estimation..."
+	@if ! command -v infracost &> /dev/null; then \
+		echo "Error: Infracost is not installed. Install it with:"; \
+		echo "  curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh"; \
+		exit 1; \
+	fi
+	cd terraform && infracost breakdown --path=. --format=table
+
+setup-hooks:
+	@echo "Setting up pre-commit hooks..."
+	@if ! command -v pre-commit &> /dev/null; then \
+		echo "Installing pre-commit..."; \
+		pip install pre-commit; \
+	fi
+	@if ! command -v infracost &> /dev/null; then \
+		echo "Warning: Infracost is not installed. Install it with:"; \
+		echo "  curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh"; \
+		echo "  infracost auth login"; \
+	fi
+	pre-commit install
+	@echo "Pre-commit hooks installed successfully!"
+	@echo ""
+	@echo "To generate baseline cost estimate for diffs, run:"
+	@echo "  cd terraform && infracost breakdown --path=. --format=json --out-file=../infracost-base.json"
+
+check-costs:
+	@echo "Checking current AWS costs and budget status..."
+	python scripts/check_costs.py --region $(AWS_REGION)
+
+# MCP Server targets
+TIMESTREAM_DATABASE ?= bus_simulator
+
+mcp-install:
+	@echo "Installing MCP server dependencies..."
+	cd mcp_server && pip install -r requirements.txt
+	@echo "MCP server dependencies installed!"
+
+mcp-run:
+	@echo "Running MCP server..."
+	@echo "Database: $(TIMESTREAM_DATABASE), Region: $(AWS_REGION)"
+	cd mcp_server && TIMESTREAM_DATABASE=$(TIMESTREAM_DATABASE) AWS_REGION=$(AWS_REGION) python -m mcp_server.server
+
+mcp-test:
+	@echo "Running MCP server tests..."
+	pytest tests/test_mcp_*.py -v

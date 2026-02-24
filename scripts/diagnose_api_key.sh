@@ -4,7 +4,7 @@
 set -e
 
 REGION="eu-west-1"
-API_ID="0w08yrrx1a"
+API_ID=$(cd terraform && terraform output -raw rest_api_id 2>/dev/null || echo "0w08yrrx1a")
 STAGE_NAME="prod"
 
 echo "=== API Gateway API Key Diagnostic ==="

@@ -111,6 +111,8 @@ def handle_websocket_connect(event: Dict[str, Any], context: Any) -> Dict[str, A
     Stores the connection ID in DynamoDB for future broadcasts.
     Initializes with empty subscription list.
     
+    Note: API key validation is handled by Custom Authorizer before reaching this function.
+    
     Args:
         event: API Gateway WebSocket CONNECT event
         context: Lambda context object
@@ -121,10 +123,14 @@ def handle_websocket_connect(event: Dict[str, Any], context: Any) -> Dict[str, A
     try:
         connection_id = event['requestContext']['connectionId']
         
-        logger.info(f"New WebSocket connection: {connection_id}")
+        # Extract and log group name for request tracking (Requirement 15.7)
+        authorizer_context = event['requestContext'].get('authorizer', {})
+        group_name = authorizer_context.get('group_name', 'unknown')
         
-        # Store connection in DynamoDB
-        store_connection(connection_id)
+        logger.info(f"New WebSocket connection: {connection_id}, group: {group_name}")
+        
+        # Store connection in DynamoDB with group name
+        store_connection(connection_id, group_name)
         
         return {'statusCode': 200}
     
@@ -248,12 +254,13 @@ def handle_websocket_message(event: Dict[str, Any], context: Any) -> Dict[str, A
         return {'statusCode': 500}
 
 
-def store_connection(connection_id: str) -> None:
+def store_connection(connection_id: str, group_name: str = 'unknown') -> None:
     """
     Store a new WebSocket connection in DynamoDB.
     
     Args:
         connection_id: WebSocket connection ID
+        group_name: Group name from authorizer context
     """
     try:
         # Calculate TTL (24 hours from now)
@@ -264,11 +271,12 @@ def store_connection(connection_id: str) -> None:
                 'connection_id': connection_id,
                 'connected_at': datetime.now().isoformat(),
                 'subscribed_lines': [],
+                'group_name': group_name,
                 'ttl': ttl
             }
         )
         
-        logger.info(f"Stored connection: {connection_id}")
+        logger.info(f"Stored connection: {connection_id}, group: {group_name}")
     
     except Exception as e:
         logger.error(f"Error storing connection {connection_id}: {str(e)}")

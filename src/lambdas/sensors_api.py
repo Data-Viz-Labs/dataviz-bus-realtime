@@ -57,6 +57,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     Routes requests to appropriate query function based on query parameters.
     Supports both latest data queries and historical queries at specific timestamps.
     
+    Note: API key validation is handled by Custom Authorizer before reaching this function.
+    
     Args:
         event: API Gateway event containing path parameters and query string
         context: Lambda context object
@@ -67,10 +69,20 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     Example event:
         {
             'pathParameters': {'entity_type': 'bus', 'entity_id': 'B001'},
-            'queryStringParameters': {'mode': 'latest'}
+            'queryStringParameters': {'mode': 'latest'},
+            'requestContext': {
+                'authorizer': {
+                    'group_name': 'team-alpha'
+                }
+            }
         }
     """
     try:
+        # Extract and log group name for request tracking (Requirement 15.7)
+        request_context = event.get('requestContext', {})
+        authorizer_context = request_context.get('authorizer', {})
+        group_name = authorizer_context.get('group_name', 'unknown')
+        
         # Extract entity_type and entity_id from path parameters
         path_params = event.get('pathParameters', {})
         if not path_params or 'entity_type' not in path_params or 'entity_id' not in path_params:
@@ -78,6 +90,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         entity_type = path_params['entity_type']
         entity_id = path_params['entity_id']
+        
+        # Log group name for request tracking
+        logger.info(f"Request from group: {group_name}, entity_type: {entity_type}, entity_id: {entity_id}")
         
         # Validate entity_type
         if entity_type not in ['bus', 'stop']:
@@ -232,7 +247,7 @@ def format_sensor_response(row: Dict[str, Any]) -> Dict[str, Any]:
     response = {
         'entity_id': row.get('entity_id'),
         'entity_type': row.get('entity_type'),
-        'timestamp': row.get('time'),
+        'time': row.get('time'),
         'temperature': float(row.get('temperature', 0)) if row.get('temperature') else None,
         'humidity': float(row.get('humidity', 0)) if row.get('humidity') else None
     }
