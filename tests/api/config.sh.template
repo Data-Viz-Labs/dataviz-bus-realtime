@@ -1,0 +1,28 @@
+#!/bin/bash
+
+# API Testing Configuration Template
+# Copy this file to config.sh and fill in your values
+# config.sh is gitignored for security
+
+# API Key (get from AWS Secrets Manager or administrators)
+export API_KEY="your-api-key-here"
+
+# Group Name (your team/group identifier)
+export GROUP_NAME="your-group-name"
+
+# REST API URL (get from Terraform outputs)
+export API_URL="https://your-api-id.execute-api.eu-west-1.amazonaws.com"
+
+# WebSocket API URL (get from Terraform outputs)
+export WS_URL="wss://your-api-id.execute-api.eu-west-1.amazonaws.com/production"
+
+# Alternative: Get values from AWS
+# Uncomment these lines to automatically retrieve values from AWS
+
+# export API_KEY=$(aws secretsmanager get-secret-value \
+#   --secret-id bus-simulator/api-key \
+#   --query SecretString \
+#   --output text | jq -r '.api_key')
+
+# export API_URL=$(cd ../../terraform && terraform output -raw rest_api_url)
+# export WS_URL=$(cd ../../terraform && terraform output -raw websocket_api_url)

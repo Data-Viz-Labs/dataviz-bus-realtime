@@ -1,5 +1,5 @@
 #!/bin/bash
-# Script to test Docker images locally with Podman
+# Script to test container images locally with Podman
 # This script verifies that the images can start and load the Python code correctly
 
 set -e

@@ -4697,3 +4697,537 @@ class TestProperty16BusPositionsFollowDefinedRoutes:
         assert min_distance <= 50.0, \
             f"After simulating bus movement (speed={speed:.1f} km/h, time={time_delta_seconds}s), " \
             f"coordinates ({lat:.6f}, {lon:.6f}) are {min_distance:.2f}m from route (max: 50m)"
+
+
+
+class TestProperty25WebSocketBroadcastForPositionEvents:
+    """
+    Property 25: WebSocket broadcast for position events
+    
+    **Validates: Requirements 3.2, 6.2**
+    
+    For any bus position event received by EventBridge, all WebSocket clients
+    subscribed to that bus's line should receive the event data within 3 seconds.
+    """
+    
+    @settings(max_examples=100)
+    @given(
+        bus_id=entity_ids,
+        line_id=entity_ids,
+        timestamp=timestamps,
+        latitude=latitudes,
+        longitude=longitudes,
+        passenger_count=passenger_counts,
+        next_stop_id=entity_ids,
+        distance=st.floats(min_value=0.0, max_value=10000.0, allow_nan=False, allow_infinity=False),
+        speed=st.floats(min_value=0.0, max_value=100.0, allow_nan=False, allow_infinity=False),
+        num_connections=st.integers(min_value=0, max_value=10)
+    )
+    def test_eventbridge_broadcasts_to_subscribed_connections(
+        self, bus_id, line_id, timestamp, latitude, longitude,
+        passenger_count, next_stop_id, distance, speed, num_connections
+    ):
+        """
+        Test that EventBridge handler broadcasts bus position events to all subscribed connections.
+        
+        For any bus position event with a given line_id, when there are connections
+        subscribed to that line, the eventbridge_handler should attempt to broadcast
+        to all of them.
+        """
+        from unittest.mock import Mock, patch
+        from lambdas.websocket_handler import eventbridge_handler
+        import json
+        
+        # Create bus position event
+        event = {
+            'detail-type': 'Bus Position Update',
+            'detail': {
+                'bus_id': bus_id,
+                'line_id': line_id,
+                'timestamp': timestamp.isoformat(),
+                'latitude': latitude,
+                'longitude': longitude,
+                'passenger_count': passenger_count,
+                'next_stop_id': next_stop_id,
+                'distance_to_next_stop': distance,
+                'speed': speed
+            }
+        }
+        
+        # Generate connection IDs
+        connection_ids = [f'conn_{i}' for i in range(num_connections)]
+        
+        # Mock get_subscribed_connections to return our connections
+        with patch('lambdas.websocket_handler.get_subscribed_connections') as mock_get_connections, \
+             patch('lambdas.websocket_handler.boto3.client') as mock_boto_client, \
+             patch('lambdas.websocket_handler.API_GATEWAY_ENDPOINT', 'https://test.execute-api.eu-west-1.amazonaws.com'):
+            
+            mock_get_connections.return_value = connection_ids
+            
+            # Mock API Gateway Management API client
+            mock_api_client = Mock()
+            mock_boto_client.return_value = mock_api_client
+            
+            # Call the eventbridge handler
+            response = eventbridge_handler(event, None)
+            
+            # Verify response
+            assert response['statusCode'] == 200, \
+                f"EventBridge handler should return 200, got {response['statusCode']}"
+            
+            # If there are connections, verify broadcast was attempted
+            if num_connections > 0:
+                body = json.loads(response['body'])
+                assert body['line_id'] == line_id, \
+                    f"Response should include line_id {line_id}"
+                assert body['total_connections'] == num_connections, \
+                    f"Should report {num_connections} total connections"
+                
+                # Verify post_to_connection was called for each connection
+                assert mock_api_client.post_to_connection.call_count == num_connections, \
+                    f"Should broadcast to all {num_connections} connections"
+                
+                # Verify the data sent contains the bus position
+                for call in mock_api_client.post_to_connection.call_args_list:
+                    call_kwargs = call[1]
+                    assert 'ConnectionId' in call_kwargs, "Should include ConnectionId"
+                    assert 'Data' in call_kwargs, "Should include Data"
+                    
+                    # Verify the data is the bus position
+                    sent_data = json.loads(call_kwargs['Data'])
+                    assert sent_data['bus_id'] == bus_id, "Should send correct bus_id"
+                    assert sent_data['line_id'] == line_id, "Should send correct line_id"
+                    assert sent_data['latitude'] == latitude, "Should send correct latitude"
+                    assert sent_data['longitude'] == longitude, "Should send correct longitude"
+            else:
+                # No connections, should return success but no broadcasts
+                assert 'No subscribers' in response['body'], \
+                    "Should indicate no subscribers when no connections"
+    
+    @settings(max_examples=50)
+    @given(
+        bus_id=entity_ids,
+        line_id=entity_ids,
+        timestamp=timestamps,
+        latitude=latitudes,
+        longitude=longitudes,
+        passenger_count=passenger_counts,
+        num_subscribed=st.integers(min_value=1, max_value=5),
+        num_stale=st.integers(min_value=0, max_value=3)
+    )
+    def test_eventbridge_removes_stale_connections(
+        self, bus_id, line_id, timestamp, latitude, longitude,
+        passenger_count, num_subscribed, num_stale
+    ):
+        """
+        Test that EventBridge handler removes stale connections when broadcast fails.
+        
+        For any bus position event, when some connections are stale (GoneException),
+        the handler should remove them from the connection table.
+        """
+        from unittest.mock import Mock, patch
+        from lambdas.websocket_handler import eventbridge_handler
+        from botocore.exceptions import ClientError
+        import json
+        
+        # Ensure we don't have more stale than subscribed
+        num_stale = min(num_stale, num_subscribed)
+        
+        # Create bus position event
+        event = {
+            'detail': {
+                'bus_id': bus_id,
+                'line_id': line_id,
+                'timestamp': timestamp.isoformat(),
+                'latitude': latitude,
+                'longitude': longitude,
+                'passenger_count': passenger_count,
+                'next_stop_id': 'S001',
+                'distance_to_next_stop': 500.0,
+                'speed': 30.0
+            }
+        }
+        
+        # Generate connection IDs (first num_stale are stale)
+        connection_ids = [f'conn_{i}' for i in range(num_subscribed)]
+        stale_connections = connection_ids[:num_stale]
+        
+        # Mock get_subscribed_connections
+        with patch('lambdas.websocket_handler.get_subscribed_connections') as mock_get_connections, \
+             patch('lambdas.websocket_handler.boto3.client') as mock_boto_client, \
+             patch('lambdas.websocket_handler.remove_connection') as mock_remove, \
+             patch('lambdas.websocket_handler.API_GATEWAY_ENDPOINT', 'https://test.execute-api.eu-west-1.amazonaws.com'):
+            
+            mock_get_connections.return_value = connection_ids
+            
+            # Mock API Gateway client to raise GoneException for stale connections
+            mock_api_client = Mock()
+            
+            def post_side_effect(ConnectionId, Data):
+                if ConnectionId in stale_connections:
+                    raise ClientError(
+                        {'Error': {'Code': 'GoneException'}},
+                        'PostToConnection'
+                    )
+            
+            mock_api_client.post_to_connection.side_effect = post_side_effect
+            mock_boto_client.return_value = mock_api_client
+            
+            # Call the eventbridge handler
+            response = eventbridge_handler(event, None)
+            
+            # Verify response
+            assert response['statusCode'] == 200
+            body = json.loads(response['body'])
+            
+            # Verify stale connections were removed
+            assert body['stale_removed'] == num_stale, \
+                f"Should remove {num_stale} stale connections"
+            
+            # Verify remove_connection was called for each stale connection
+            assert mock_remove.call_count == num_stale, \
+                f"Should call remove_connection {num_stale} times"
+            
+            # Verify the correct connections were removed
+            removed_connection_ids = [call[0][0] for call in mock_remove.call_args_list]
+            for stale_conn in stale_connections:
+                assert stale_conn in removed_connection_ids, \
+                    f"Stale connection {stale_conn} should be removed"
+    
+    @settings(max_examples=50)
+    @given(
+        line_id=entity_ids,
+        num_connections=st.integers(min_value=1, max_value=10)
+    )
+    def test_eventbridge_handler_requires_line_id(self, line_id, num_connections):
+        """
+        Test that EventBridge handler requires line_id in the event.
+        
+        For any event without a line_id, the handler should return an error.
+        """
+        from lambdas.websocket_handler import eventbridge_handler
+        
+        # Create event without line_id
+        event = {
+            'detail': {
+                'bus_id': 'B001',
+                # Missing line_id
+                'timestamp': '2024-01-15T10:30:00Z'
+            }
+        }
+        
+        response = eventbridge_handler(event, None)
+        
+        # Should return error
+        assert response['statusCode'] == 400, \
+            "Should return 400 when line_id is missing"
+        assert 'Missing line_id' in response['body'], \
+            "Error message should indicate missing line_id"
+
+
+class TestProperty27WebSocketConnectionEstablishment:
+    """
+    Property 27: WebSocket connection establishment
+    
+    **Validates: Requirements 3.1**
+    
+    For any WebSocket connection request to the /bus-position/stream endpoint
+    with a valid API key and group name, the connection should be successfully
+    established and a connection ID should be stored for future broadcasts.
+    """
+    
+    @settings(max_examples=100)
+    @given(
+        connection_id=entity_ids,
+        group_name=st.text(min_size=1, max_size=50, alphabet=st.characters(
+            whitelist_categories=('Lu', 'Ll', 'Nd', 'Pd'),
+            min_codepoint=45, max_codepoint=122
+        )).filter(lambda x: x.strip())
+    )
+    def test_websocket_connect_stores_connection(self, connection_id, group_name):
+        """
+        Test that WebSocket CONNECT event stores the connection in DynamoDB.
+        
+        For any connection request with a valid connection_id and group_name,
+        the handler should store the connection with an empty subscription list.
+        """
+        from unittest.mock import patch
+        from lambdas.websocket_handler import handle_websocket_connect
+        
+        # Create CONNECT event
+        event = {
+            'requestContext': {
+                'connectionId': connection_id,
+                'authorizer': {
+                    'group_name': group_name
+                }
+            }
+        }
+        
+        # Mock store_connection
+        with patch('lambdas.websocket_handler.store_connection') as mock_store:
+            response = handle_websocket_connect(event, None)
+            
+            # Verify response
+            assert response['statusCode'] == 200, \
+                f"Connection should succeed, got status {response['statusCode']}"
+            
+            # Verify store_connection was called with correct parameters
+            mock_store.assert_called_once()
+            call_args = mock_store.call_args[0]
+            assert call_args[0] == connection_id, \
+                f"Should store connection_id {connection_id}"
+            assert call_args[1] == group_name, \
+                f"Should store group_name {group_name}"
+    
+    @settings(max_examples=100)
+    @given(
+        connection_id=entity_ids,
+        group_name=st.text(min_size=1, max_size=50).filter(lambda x: x.strip()),
+        line_ids_to_subscribe=st.lists(
+            st.text(min_size=1, max_size=5).filter(lambda x: x.strip()),
+            min_size=1,
+            max_size=5
+        )
+    )
+    def test_websocket_subscription_updates_connection(
+        self, connection_id, group_name, line_ids_to_subscribe
+    ):
+        """
+        Test that WebSocket subscription message updates the connection's subscribed lines.
+        
+        For any connection with a subscription request, the handler should update
+        the connection's subscribed_lines in DynamoDB.
+        """
+        from unittest.mock import patch
+        from lambdas.websocket_handler import handle_websocket_message
+        import json
+        
+        # Create subscription message event
+        event = {
+            'requestContext': {
+                'connectionId': connection_id
+            },
+            'body': json.dumps({
+                'action': 'subscribe',
+                'line_ids': line_ids_to_subscribe
+            })
+        }
+        
+        # Mock update_subscription
+        with patch('lambdas.websocket_handler.update_subscription') as mock_update:
+            response = handle_websocket_message(event, None)
+            
+            # Verify response
+            assert response['statusCode'] == 200, \
+                f"Subscription should succeed, got status {response['statusCode']}"
+            
+            body = json.loads(response['body'])
+            assert 'Subscribed' in body['message'], \
+                "Response should confirm subscription"
+            assert body['line_ids'] == line_ids_to_subscribe, \
+                f"Response should include subscribed line_ids"
+            
+            # Verify update_subscription was called
+            mock_update.assert_called_once_with(connection_id, line_ids_to_subscribe)
+    
+    @settings(max_examples=100)
+    @given(
+        connection_id=entity_ids
+    )
+    def test_websocket_disconnect_removes_connection(self, connection_id):
+        """
+        Test that WebSocket DISCONNECT event removes the connection from DynamoDB.
+        
+        For any disconnection request, the handler should remove the connection
+        from the connection table.
+        """
+        from unittest.mock import patch
+        from lambdas.websocket_handler import handle_websocket_disconnect
+        
+        # Create DISCONNECT event
+        event = {
+            'requestContext': {
+                'connectionId': connection_id
+            }
+        }
+        
+        # Mock remove_connection
+        with patch('lambdas.websocket_handler.remove_connection') as mock_remove:
+            response = handle_websocket_disconnect(event, None)
+            
+            # Verify response
+            assert response['statusCode'] == 200, \
+                f"Disconnection should succeed, got status {response['statusCode']}"
+            
+            # Verify remove_connection was called
+            mock_remove.assert_called_once_with(connection_id)
+    
+    @settings(max_examples=50)
+    @given(
+        connection_id=entity_ids,
+        initial_lines=st.lists(
+            st.text(min_size=1, max_size=5).filter(lambda x: x.strip()),
+            min_size=2,
+            max_size=5
+        )
+    )
+    def test_websocket_unsubscribe_removes_specific_lines(
+        self, connection_id, initial_lines
+    ):
+        """
+        Test that WebSocket unsubscribe message removes specific lines from subscription.
+        
+        For any connection with an unsubscribe request, the handler should remove
+        only the specified lines from the connection's subscriptions.
+        """
+        from unittest.mock import patch, Mock
+        from lambdas.websocket_handler import handle_websocket_message
+        import json
+        
+        # Select some lines to unsubscribe (at least 1, at most all-1)
+        num_to_unsubscribe = max(1, len(initial_lines) // 2)
+        lines_to_unsubscribe = initial_lines[:num_to_unsubscribe]
+        remaining_lines = initial_lines[num_to_unsubscribe:]
+        
+        # Create unsubscribe message event
+        event = {
+            'requestContext': {
+                'connectionId': connection_id
+            },
+            'body': json.dumps({
+                'action': 'unsubscribe',
+                'line_ids': lines_to_unsubscribe
+            })
+        }
+        
+        # Mock remove_subscriptions
+        with patch('lambdas.websocket_handler.remove_subscriptions') as mock_remove:
+            response = handle_websocket_message(event, None)
+            
+            # Verify response
+            assert response['statusCode'] == 200, \
+                f"Unsubscription should succeed, got status {response['statusCode']}"
+            
+            body = json.loads(response['body'])
+            assert 'Unsubscribed' in body['message'], \
+                "Response should confirm unsubscription"
+            assert body['line_ids'] == lines_to_unsubscribe, \
+                f"Response should include unsubscribed line_ids"
+            
+            # Verify remove_subscriptions was called
+            mock_remove.assert_called_once_with(connection_id, lines_to_unsubscribe)
+    
+    @settings(max_examples=50)
+    @given(
+        connection_id=entity_ids,
+        line_id=entity_ids,
+        num_connections_for_line=st.integers(min_value=0, max_value=10)
+    )
+    def test_get_subscribed_connections_filters_by_line(
+        self, connection_id, line_id, num_connections_for_line
+    ):
+        """
+        Test that get_subscribed_connections returns only connections subscribed to the line.
+        
+        For any line_id, the function should return only connections that have
+        that line_id in their subscribed_lines list.
+        """
+        from unittest.mock import patch
+        from lambdas.websocket_handler import get_subscribed_connections
+        
+        # Create mock DynamoDB items - only subscribed connections
+        # (DynamoDB's FilterExpression would filter out non-subscribed ones)
+        mock_items = []
+        expected_connections = []
+        
+        for i in range(num_connections_for_line):
+            conn_id = f'subscribed_{i}'
+            mock_items.append({
+                'connection_id': conn_id,
+                'subscribed_lines': [line_id, 'OTHER_LINE']
+            })
+            expected_connections.append(conn_id)
+        
+        # Mock DynamoDB scan to return only filtered items
+        # (simulating DynamoDB's FilterExpression behavior)
+        with patch('lambdas.websocket_handler.connections_table') as mock_table:
+            mock_table.scan.return_value = {'Items': mock_items}
+            
+            # Call get_subscribed_connections
+            result = get_subscribed_connections(line_id)
+            
+            # Verify only subscribed connections are returned
+            assert len(result) == num_connections_for_line, \
+                f"Should return {num_connections_for_line} connections subscribed to {line_id}"
+            
+            for conn_id in expected_connections:
+                assert conn_id in result, \
+                    f"Connection {conn_id} should be in results"
+    
+    @settings(max_examples=50)
+    @given(
+        connection_id=entity_ids
+    )
+    def test_websocket_invalid_json_returns_error(self, connection_id):
+        """
+        Test that invalid JSON in WebSocket message returns an error.
+        
+        For any message with invalid JSON, the handler should return a 400 error.
+        """
+        from lambdas.websocket_handler import handle_websocket_message
+        import json
+        
+        # Create message with invalid JSON
+        event = {
+            'requestContext': {
+                'connectionId': connection_id
+            },
+            'body': 'invalid json {not valid'
+        }
+        
+        response = handle_websocket_message(event, None)
+        
+        # Verify error response
+        assert response['statusCode'] == 400, \
+            "Should return 400 for invalid JSON"
+        
+        body = json.loads(response['body'])
+        assert 'Invalid JSON' in body['error'], \
+            "Error message should indicate invalid JSON"
+    
+    @settings(max_examples=50)
+    @given(
+        connection_id=entity_ids,
+        unknown_action=st.text(min_size=1, max_size=20).filter(
+            lambda x: x not in ['subscribe', 'unsubscribe']
+        )
+    )
+    def test_websocket_unknown_action_returns_error(self, connection_id, unknown_action):
+        """
+        Test that unknown action in WebSocket message returns an error.
+        
+        For any message with an unknown action, the handler should return a 400 error.
+        """
+        from lambdas.websocket_handler import handle_websocket_message
+        import json
+        
+        # Create message with unknown action
+        event = {
+            'requestContext': {
+                'connectionId': connection_id
+            },
+            'body': json.dumps({
+                'action': unknown_action
+            })
+        }
+        
+        response = handle_websocket_message(event, None)
+        
+        # Verify error response
+        assert response['statusCode'] == 400, \
+            f"Should return 400 for unknown action '{unknown_action}'"
+        
+        body = json.loads(response['body'])
+        assert 'Unknown action' in body['error'], \
+            "Error message should indicate unknown action"
