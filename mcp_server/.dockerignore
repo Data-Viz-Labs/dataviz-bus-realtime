@@ -1,0 +1,39 @@
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation (not needed in container)
+README.md
+AUTH_IMPLEMENTATION.md
+
+# Setup files (not needed in container)
+setup.py
+
+# Git files
+.git/
+.gitignore
+
+# Test files
+tests/
+test_*.py
+*_test.py
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/

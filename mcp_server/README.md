@@ -12,36 +12,110 @@ The MCP server provides five tools for querying bus system data:
 4. **query_line_buses** - Query all buses on a specific line
 5. **query_time_range** - Query time series data over a time range
 
-## Installation
+## Authentication
 
-### Prerequisites
+**All tool requests require authentication via API key.**
 
+The MCP server validates API keys from the `x-api-key` header against AWS Secrets Manager, using the same API key as the REST APIs for unified authentication.
+
+### API Key Requirements
+
+- API key must be provided in the `x-api-key` header for all tool requests
+- The API key is stored in AWS Secrets Manager (secret ID: `bus-simulator/api-key`)
+- Invalid or missing API keys will result in a 401 authentication error
+- Authentication attempts are logged to CloudWatch Logs
+
+## Deployment Options
+
+The MCP server can be deployed in two ways:
+
+1. **AWS ECS Fargate (Production)**: Deployed as a containerized service with API Gateway access
+2. **Local Installation (Development)**: Run locally for testing and development
+
+### Production Deployment (AWS ECS)
+
+The MCP server is deployed on AWS ECS Fargate in private subnets with external access via API Gateway HTTP API.
+
+**Architecture:**
+- **ECS Service**: Runs in private subnets with auto-restart on failure
+- **API Gateway**: HTTP API with VPC Link for secure access to ECS
+- **Authentication**: Custom authorizer validates x-api-key and x-group-name headers
+- **Networking**: Private subnets with NAT gateway for AWS service access
+- **Monitoring**: CloudWatch Logs at `/ecs/mcp-server`
+
+**Accessing the Deployed MCP Server:**
+
+```bash
+# Get the API endpoint from Terraform outputs
+cd terraform
+MCP_ENDPOINT=$(terraform output -raw mcp_api_endpoint)
+
+# Get the API key from Secrets Manager
+API_KEY=$(aws secretsmanager get-secret-value \
+  --secret-id bus-simulator/api-key \
+  --query SecretString --output text | jq -r '.api_key')
+
+# Call the MCP server
+curl -X POST "${MCP_ENDPOINT}/mcp/list-tools" \
+  -H "x-api-key: ${API_KEY}" \
+  -H "x-group-name: your-group-name" \
+  -H "Content-Type: application/json"
+```
+
+**Authentication Requirements:**
+- `x-api-key`: API key from AWS Secrets Manager (secret ID: `bus-simulator/api-key`)
+- `x-group-name`: Group identifier for request tracking (any string value)
+
+Both headers are required for all requests. Missing or invalid headers will result in 401 Unauthorized.
+
+**CloudWatch Logs:**
+
+View MCP server logs:
+```bash
+aws logs tail /ecs/mcp-server --follow --region eu-west-1
+```
+
+Filter by group name:
+```bash
+aws logs filter-log-events \
+  --log-group-name /ecs/mcp-server \
+  --filter-pattern "your-group-name" \
+  --region eu-west-1
+```
+
+### Local Installation (Development)
+
+For local development and testing:
+
+**Prerequisites:**
 - Python 3.9 or higher
 - AWS credentials configured (IAM role or credentials file)
 - Access to the Timestream database
+- Valid API key (stored in AWS Secrets Manager)
+- IAM permissions to read from Secrets Manager
 
-### Install Dependencies
+**Install Dependencies:**
 
 ```bash
 cd mcp_server
 pip install -r requirements.txt
 ```
 
-### Install as Package
+**Install as Package:**
 
 ```bash
 cd mcp_server
 pip install -e .
 ```
 
-## Configuration
+**Configuration:**
 
 The MCP server uses environment variables for configuration:
 
 - `TIMESTREAM_DATABASE`: Name of the Timestream database (default: `bus_simulator`)
 - `AWS_REGION`: AWS region for Timestream (default: `eu-west-1`)
 
-### MCP Client Configuration
+**MCP Client Configuration:**
 
 Add the following to your MCP client configuration file (e.g., `~/.config/mcp/config.json`):
 
@@ -72,6 +146,25 @@ python -m mcp_server.server
 madrid-bus-mcp
 ```
 
+### Authentication Headers
+
+All tool requests must include the `x-api-key` header with a valid API key:
+
+```json
+{
+  "tool": "query_people_count",
+  "arguments": {
+    "stop_id": "S001",
+    "mode": "latest",
+    "_headers": {
+      "x-api-key": "your-api-key-here"
+    }
+  }
+}
+```
+
+**Note:** The `_headers` field is a special argument that contains authentication headers. It is not passed to the tool handler itself.
+
 ### Tool Descriptions
 
 #### 1. query_people_count
@@ -89,7 +182,10 @@ Query people count at a bus stop.
   "tool": "query_people_count",
   "arguments": {
     "stop_id": "S001",
-    "mode": "latest"
+    "mode": "latest",
+    "_headers": {
+      "x-api-key": "your-api-key-here"
+    }
   }
 }
 ```
@@ -308,7 +404,27 @@ All tools return structured error responses when errors occur:
 }
 ```
 
-Common errors:
+### Authentication Errors
+
+When authentication fails, the response includes a 401 status code:
+
+```json
+{
+  "success": false,
+  "error": "Authentication failed: Missing x-api-key header",
+  "status_code": 401,
+  "timestamp": "2024-01-15T10:30:05.123Z"
+}
+```
+
+Common authentication errors:
+- Missing x-api-key header
+- Invalid API key
+- Unable to retrieve API key from Secrets Manager
+- Access denied to Secrets Manager
+
+### Other Common Errors
+
 - Invalid entity ID (stop, bus, or line not found)
 - Invalid timestamp format (must be ISO8601)
 - Invalid data_type parameter
@@ -330,6 +446,13 @@ The MCP server requires the following IAM permissions:
         "timestream:Select"
       ],
       "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue"
+      ],
+      "Resource": "arn:aws:secretsmanager:*:*:secret:bus-simulator/api-key-*"
     }
   ]
 }
@@ -346,15 +469,15 @@ pytest tests/test_mcp_*.py -v
 
 ### Testing with Mock Data
 
-For local development without AWS access, you can mock the Timestream client:
+For local development without AWS access, you can mock the Timestream client and authentication:
 
 ```python
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import asyncio
 
 # Mock Timestream client
-mock_client = Mock()
-mock_client.query.return_value = {
+mock_timestream = Mock()
+mock_timestream.query.return_value = {
     'Rows': [
         {
             'Data': [
@@ -373,14 +496,151 @@ mock_client.query.return_value = {
     ]
 }
 
-# Use mock in server
-server = BusSimulatorMCPServer('bus_simulator', 'eu-west-1')
-server.timestream_client = mock_client
+# Mock Secrets Manager client
+mock_secrets = Mock()
+mock_secrets.get_secret_value.return_value = {
+    'SecretString': '{"api_key": "test-api-key-123"}'
+}
+
+# Use mocks in server
+with patch('boto3.client') as mock_boto:
+    def client_factory(service, **kwargs):
+        if service == 'timestream-query':
+            return mock_timestream
+        elif service == 'secretsmanager':
+            return mock_secrets
+        return Mock()
+    
+    mock_boto.side_effect = client_factory
+    
+    server = BusSimulatorMCPServer('bus_simulator', 'eu-west-1')
+    # Test with valid API key
+    headers = {'x-api-key': 'test-api-key-123'}
+    # ... test tool calls
 ```
 
 ## Troubleshooting
 
-### Server won't start
+### ECS Deployment Issues
+
+#### ECS Service Not Starting
+
+1. Check ECS service status:
+   ```bash
+   aws ecs describe-services \
+     --cluster bus-simulator-cluster \
+     --services mcp-server \
+     --region eu-west-1
+   ```
+
+2. Check task status and stopped reason:
+   ```bash
+   aws ecs describe-tasks \
+     --cluster bus-simulator-cluster \
+     --tasks $(aws ecs list-tasks --cluster bus-simulator-cluster --service-name mcp-server --query 'taskArns[0]' --output text) \
+     --region eu-west-1
+   ```
+
+3. View container logs:
+   ```bash
+   aws logs tail /ecs/mcp-server --follow --region eu-west-1
+   ```
+
+#### API Gateway Returns 502 Bad Gateway
+
+1. Verify ECS service is running:
+   ```bash
+   aws ecs describe-services \
+     --cluster bus-simulator-cluster \
+     --services mcp-server \
+     --query 'services[0].runningCount' \
+     --region eu-west-1
+   ```
+
+2. Check VPC Link status:
+   ```bash
+   aws apigatewayv2 get-vpc-link \
+     --vpc-link-id $(terraform output -raw mcp_vpc_link_id) \
+     --region eu-west-1
+   ```
+
+3. Verify security group allows traffic from VPC Link to ECS:
+   ```bash
+   # Check security group rules
+   aws ec2 describe-security-groups \
+     --group-ids $(terraform output -raw mcp_security_group_id) \
+     --region eu-west-1
+   ```
+
+#### Authentication Fails (401 Unauthorized)
+
+1. Verify API key exists in Secrets Manager:
+   ```bash
+   aws secretsmanager get-secret-value --secret-id bus-simulator/api-key --region eu-west-1
+   ```
+
+2. Check both headers are present:
+   - `x-api-key`: Must match the key in Secrets Manager
+   - `x-group-name`: Must be present (any string value)
+
+3. Check authorizer Lambda logs:
+   ```bash
+   aws logs tail /aws/lambda/bus-simulator-rest-authorizer --follow --region eu-west-1
+   ```
+
+#### High Memory or CPU Usage
+
+1. Check CloudWatch metrics:
+   ```bash
+   aws cloudwatch get-metric-statistics \
+     --namespace AWS/ECS \
+     --metric-name MemoryUtilization \
+     --dimensions Name=ServiceName,Value=mcp-server Name=ClusterName,Value=bus-simulator-cluster \
+     --start-time $(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S) \
+     --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+     --period 300 \
+     --statistics Average \
+     --region eu-west-1
+   ```
+
+2. Review query patterns in logs for expensive operations
+
+3. Consider increasing CPU/memory in Terraform configuration:
+   ```hcl
+   module "mcp_server" {
+     cpu    = "1024"  # Increase from 512
+     memory = "2048"  # Increase from 1024
+     ...
+   }
+   ```
+
+#### Network Connectivity Issues
+
+1. Verify NAT gateway is functioning:
+   ```bash
+   aws ec2 describe-nat-gateways \
+     --filter "Name=vpc-id,Values=$(terraform output -raw vpc_id)" \
+     --region eu-west-1
+   ```
+
+2. Check VPC endpoints for Timestream and Secrets Manager:
+   ```bash
+   aws ec2 describe-vpc-endpoints \
+     --filters "Name=vpc-id,Values=$(terraform output -raw vpc_id)" \
+     --region eu-west-1
+   ```
+
+3. Verify security group allows outbound HTTPS (443):
+   ```bash
+   aws ec2 describe-security-groups \
+     --group-ids $(terraform output -raw mcp_security_group_id) \
+     --query 'SecurityGroups[0].IpPermissionsEgress' \
+     --region eu-west-1
+   ```
+
+### Local Development Issues
+
+#### Server won't start
 
 1. Check AWS credentials are configured:
    ```bash
@@ -397,7 +657,29 @@ server.timestream_client = mock_client
    python --version  # Should be 3.9+
    ```
 
-### Queries return no data
+4. Verify Secrets Manager access:
+   ```bash
+   aws secretsmanager get-secret-value --secret-id bus-simulator/api-key
+   ```
+
+### Common Issues
+
+#### Authentication errors
+
+1. Verify API key exists in Secrets Manager:
+   ```bash
+   aws secretsmanager get-secret-value --secret-id bus-simulator/api-key
+   ```
+
+2. Check IAM permissions for Secrets Manager access
+
+3. Ensure x-api-key header is included in all tool requests
+
+4. Verify the API key matches the one stored in Secrets Manager
+
+5. Ensure x-group-name header is present (required for all requests)
+
+#### Queries return no data
 
 1. Verify data exists in Timestream:
    ```bash
@@ -408,9 +690,17 @@ server.timestream_client = mock_client
 
 3. Verify timestamp format is ISO8601 (e.g., "2024-01-15T10:30:00Z")
 
-### Permission errors
+#### Permission errors
 
-Ensure your AWS credentials have the required Timestream permissions. Check IAM policy attached to your user/role.
+Ensure your AWS credentials have the required Timestream and Secrets Manager permissions. Check IAM policy attached to your user/role.
+
+For ECS deployment, verify the task role has the correct permissions:
+```bash
+aws iam get-role-policy \
+  --role-name bus-simulator-mcp-task-role \
+  --policy-name timestream-access \
+  --region eu-west-1
+```
 
 ## License
 

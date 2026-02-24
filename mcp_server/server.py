@@ -3,6 +3,8 @@ MCP Server for Madrid Bus Simulator Time Series Data Access.
 
 This module implements the Model Context Protocol server that provides
 programmatic access to Timestream time series data.
+
+Authentication is required for all tool requests via x-api-key header.
 """
 
 import asyncio
@@ -13,6 +15,8 @@ from datetime import datetime, timezone
 import boto3
 from mcp.server import Server
 from mcp.types import Tool, TextContent
+
+from .auth import AuthenticationMiddleware, AuthenticationError
 
 
 class BusSimulatorMCPServer:
@@ -29,6 +33,9 @@ class BusSimulatorMCPServer:
         self.server = Server("madrid-bus-simulator")
         self.timestream_client = boto3.client('timestream-query', region_name=timestream_region)
         self.database = timestream_database
+        
+        # Initialize authentication middleware
+        self.auth_middleware = AuthenticationMiddleware(region=timestream_region)
         
         # Register tools
         self._register_tools()
@@ -164,18 +171,41 @@ class BusSimulatorMCPServer:
         
         @self.server.call_tool()
         async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
-            """Handle tool invocation."""
+            """
+            Handle tool invocation with authentication.
+            
+            All tool requests must include valid x-api-key header.
+            """
             try:
+                # Extract headers from arguments (if provided by MCP client)
+                headers = arguments.get('_headers', {})
+                
+                # Authenticate the request
+                try:
+                    self.auth_middleware.authenticate_request(headers)
+                except AuthenticationError as auth_error:
+                    error_result = {
+                        "success": False,
+                        "error": f"Authentication failed: {str(auth_error)}",
+                        "status_code": 401,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }
+                    return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
+                
+                # Remove headers from arguments before passing to tool handlers
+                tool_arguments = {k: v for k, v in arguments.items() if k != '_headers'}
+                
+                # Route to appropriate tool handler
                 if name == "query_people_count":
-                    result = await self._query_people_count(**arguments)
+                    result = await self._query_people_count(**tool_arguments)
                 elif name == "query_sensor_data":
-                    result = await self._query_sensor_data(**arguments)
+                    result = await self._query_sensor_data(**tool_arguments)
                 elif name == "query_bus_position":
-                    result = await self._query_bus_position(**arguments)
+                    result = await self._query_bus_position(**tool_arguments)
                 elif name == "query_line_buses":
-                    result = await self._query_line_buses(**arguments)
+                    result = await self._query_line_buses(**tool_arguments)
                 elif name == "query_time_range":
-                    result = await self._query_time_range(**arguments)
+                    result = await self._query_time_range(**tool_arguments)
                 else:
                     return [TextContent(type="text", text=f"Unknown tool: {name}")]
                 
