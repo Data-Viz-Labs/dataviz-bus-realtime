@@ -187,12 +187,39 @@ def test_extract_api_key_missing(auth_middleware):
     assert api_key is None
 
 
+def test_extract_group_name_present(auth_middleware):
+    """Test extracting group name from headers when present."""
+    headers = {'x-group-name': 'test-group'}
+    
+    group_name = auth_middleware.extract_group_name(headers)
+    
+    assert group_name == 'test-group'
+
+
+def test_extract_group_name_case_insensitive(auth_middleware):
+    """Test extracting group name with different case headers."""
+    headers = {'X-GROUP-NAME': 'test-group'}
+    
+    group_name = auth_middleware.extract_group_name(headers)
+    
+    assert group_name == 'test-group'
+
+
+def test_extract_group_name_missing(auth_middleware):
+    """Test extracting group name when not present in headers."""
+    headers = {'other-header': 'value'}
+    
+    group_name = auth_middleware.extract_group_name(headers)
+    
+    assert group_name is None
+
+
 def test_authenticate_request_success(auth_middleware, mock_secrets_client):
     """Test successful request authentication."""
     mock_secrets_client.get_secret_value.return_value = {
         'SecretString': json.dumps({'api_key': 'valid-key'})
     }
-    headers = {'x-api-key': 'valid-key'}
+    headers = {'x-api-key': 'valid-key', 'x-group-name': 'test-group'}
     
     # Should not raise exception
     auth_middleware.authenticate_request(headers)
@@ -206,12 +233,23 @@ def test_authenticate_request_missing_key(auth_middleware):
         auth_middleware.authenticate_request(headers)
 
 
+def test_authenticate_request_missing_group_name(auth_middleware, mock_secrets_client):
+    """Test authentication failure when group name is missing."""
+    mock_secrets_client.get_secret_value.return_value = {
+        'SecretString': json.dumps({'api_key': 'valid-key'})
+    }
+    headers = {'x-api-key': 'valid-key'}
+    
+    with pytest.raises(AuthenticationError, match="Missing x-group-name header"):
+        auth_middleware.authenticate_request(headers)
+
+
 def test_authenticate_request_invalid_key(auth_middleware, mock_secrets_client):
     """Test authentication failure with invalid API key."""
     mock_secrets_client.get_secret_value.return_value = {
         'SecretString': json.dumps({'api_key': 'valid-key'})
     }
-    headers = {'x-api-key': 'invalid-key'}
+    headers = {'x-api-key': 'invalid-key', 'x-group-name': 'test-group'}
     
     with pytest.raises(AuthenticationError, match="Invalid API key"):
         auth_middleware.authenticate_request(headers)
@@ -303,11 +341,11 @@ async def test_end_to_end_authentication_flow():
         )
         
         # Test valid authentication
-        headers = {'x-api-key': 'integration-test-key'}
+        headers = {'x-api-key': 'integration-test-key', 'x-group-name': 'test-group'}
         middleware.authenticate_request(headers)  # Should not raise
         
         # Test invalid authentication
-        invalid_headers = {'x-api-key': 'wrong-key'}
+        invalid_headers = {'x-api-key': 'wrong-key', 'x-group-name': 'test-group'}
         with pytest.raises(AuthenticationError):
             middleware.authenticate_request(invalid_headers)
 
