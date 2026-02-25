@@ -12,10 +12,10 @@ help:
 	@echo "  plan               - Run Terraform plan"
 	@echo "  package-lambda     - Package a single Lambda function (LAMBDA=name)"
 	@echo "  package-all-lambdas- Package all Lambda functions"
-	@echo "  build-feeders      - Build container images for feeder services"
-	@echo "  build-mcp          - Build MCP server container image"
-	@echo "  push-images        - Push feeder container images to ECR"
-	@echo "  push-mcp           - Push MCP server container image to ECR"
+	@echo "  build-feeders      - Build container images for all 4 services (3 feeders + MCP server)"
+	@echo "  build-mcp          - Build MCP server container image only"
+	@echo "  push-images        - Push all 4 container images to ECR (3 feeders + MCP server)"
+	@echo "  push-mcp           - Push MCP server container image to ECR only"
 	@echo "  load-config        - Load configuration data to S3"
 	@echo "  export-keys        - Export API keys for hackathon participants"
 	@echo "  verify             - Run pre-hackathon verification checks"
@@ -57,15 +57,20 @@ deploy: package-all-lambdas init plan apply
 	@echo "Setup infrastructure and load data..."	
 	$(MAKE) load-config
 	$(MAKE) push-images
-	$(MAKE) push-mcp
 	$(MAKE) export-keys
 	@echo "Deployment complete!"
 
 build-feeders:
 	@echo "Building container images with Podman..."
+	@echo "Building People Count Feeder..."
 	podman build -t bus-simulator-people-count:latest -f docker/Dockerfile.people_count .
+	@echo "Building Sensors Feeder..."
 	podman build -t bus-simulator-sensors:latest -f docker/Dockerfile.sensors .
+	@echo "Building Bus Position Feeder..."
 	podman build -t bus-simulator-bus-position:latest -f docker/Dockerfile.bus_position .
+	@echo "Building MCP Server..."
+	podman build -t bus-simulator-mcp:latest -f mcp_server/Dockerfile mcp_server/
+	@echo "All 4 containers built successfully!"
 
 build-mcp:
 	@echo "Building MCP server container image with Podman..."
@@ -76,19 +81,26 @@ push-images: build-feeders
 	@echo "Logging in to ECR..."
 	aws ecr get-login-password --region $(AWS_REGION) | podman login --username AWS --password-stdin $(ECR_REGISTRY)
 	@echo "Tagging and pushing images..."
+	@echo "Pushing People Count Feeder..."
 	podman tag bus-simulator-people-count:latest $(ECR_REGISTRY)/bus-simulator-feeders:people-count-latest
-	podman tag bus-simulator-sensors:latest $(ECR_REGISTRY)/bus-simulator-feeders:sensors-latest
-	podman tag bus-simulator-bus-position:latest $(ECR_REGISTRY)/bus-simulator-feeders:bus-position-latest
 	podman push $(ECR_REGISTRY)/bus-simulator-feeders:people-count-latest
+	@echo "Pushing Sensors Feeder..."
+	podman tag bus-simulator-sensors:latest $(ECR_REGISTRY)/bus-simulator-feeders:sensors-latest
 	podman push $(ECR_REGISTRY)/bus-simulator-feeders:sensors-latest
+	@echo "Pushing Bus Position Feeder..."
+	podman tag bus-simulator-bus-position:latest $(ECR_REGISTRY)/bus-simulator-feeders:bus-position-latest
 	podman push $(ECR_REGISTRY)/bus-simulator-feeders:bus-position-latest
+	@echo "Pushing MCP Server..."
+	podman tag bus-simulator-mcp:latest $(ECR_REGISTRY)/bus-simulator-feeders:mcp-server-latest
+	podman push $(ECR_REGISTRY)/bus-simulator-feeders:mcp-server-latest
+	@echo "All 4 container images pushed successfully!"
 
 push-mcp: build-mcp
 	@echo "Logging in to ECR..."
 	aws ecr get-login-password --region $(AWS_REGION) | podman login --username AWS --password-stdin $(ECR_REGISTRY)
 	@echo "Tagging and pushing MCP server image..."
-	podman tag bus-simulator-mcp:latest $(ECR_REGISTRY)/bus-simulator-mcp:latest
-	podman push $(ECR_REGISTRY)/bus-simulator-mcp:latest
+	podman tag bus-simulator-mcp:latest $(ECR_REGISTRY)/bus-simulator-feeders:mcp-server-latest
+	podman push $(ECR_REGISTRY)/bus-simulator-feeders:mcp-server-latest
 	@echo "MCP server image pushed successfully!"
 
 load-config:
