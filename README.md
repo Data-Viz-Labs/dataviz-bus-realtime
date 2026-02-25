@@ -6,71 +6,7 @@ A cloud-native system that generates and serves temporally consistent simulated 
 
 The Madrid Bus Real-Time Simulator is designed for hackathons and educational purposes, providing realistic bus operation data through REST and WebSocket APIs. The system continuously generates data for bus positions, passenger counts, and sensor readings, storing it in AWS Timestream for historical queries.
 
-## Architecture
-
-### High-Level Overview
-
-![Architecture Diagram](docs/diagrams/architecture.png)
-
-The system follows a producer-consumer pattern with three main layers:
-
-1. **Data Generation Layer (Fargate)**: Three feeder services continuously generate realistic bus operation data
-2. **Event & Storage Layer**: AWS Timestream stores time series data, EventBridge handles real-time events
-3. **API Layer (Lambda + API Gateway)**: REST and WebSocket APIs serve data to clients
-
-### Detailed Architecture
-
-![Detailed Architecture](docs/diagrams/detailed_architecture.png)
-
-**Key Components:**
-
-- **API Gateway**: 
-  - REST API with API key authentication for historical/latest queries
-  - WebSocket API with custom authorizer for real-time updates
-  
-- **Lambda Functions**:
-  - People Count API: Query passenger counts at bus stops
-  - Sensors API: Query temperature, humidity, CO2, door status
-  - Bus Position API: Query bus locations and passenger counts
-  - WebSocket Handler: Manage real-time subscriptions and broadcasts
-  - WebSocket Authorizer: Validate API keys for WebSocket connections
-
-- **MCP Server (ECS Fargate)**:
-  - Programmatic access to Timestream data via Model Context Protocol
-  - Deployed on ECS in private subnets with API Gateway HTTP API access
-  - Five tools for querying people count, sensors, bus positions, and time ranges
-  - Authentication via x-api-key and x-group-name headers (same as REST APIs)
-  - CloudWatch Logs at `/ecs/mcp-server`
-
-- **Fargate Services**:
-  - People Count Feeder: Generates passenger arrival/departure data
-  - Sensors Feeder: Generates environmental sensor readings
-  - Bus Position Feeder: Simulates bus movement along routes
-
-- **Storage**:
-  - Timestream: Time series database (24h memory + 30d magnetic)
-  - DynamoDB: WebSocket connection tracking
-  - S3: Configuration storage (lines.yaml)
-
-- **Event Processing**:
-  - EventBridge: Routes real-time bus position events to WebSocket clients
-
-### Data Flow
-
-![Data Flow](docs/diagrams/data_flow.png)
-
-**Continuous Data Generation:**
-1. Feeder services generate data every 30-60 seconds
-2. Data is written to Timestream with automatic retention
-3. Bus position updates trigger EventBridge events
-4. Events are broadcast to subscribed WebSocket clients
-
-**API Consumption:**
-- REST APIs: Query latest or historical data with API key authentication
-- WebSocket API: Subscribe to real-time updates for specific bus lines
-- All APIs enforce rate limiting (50 req/sec, 10k req/day per key)
-
-## Features
+## Key Features
 
 - **Real-time bus positions**: Track buses along their routes with GPS coordinates
 - **Bidirectional routes**: Buses travel outbound and return on inbound routes with automatic direction changes at terminals
@@ -81,9 +17,50 @@ The system follows a producer-consumer pattern with three main layers:
 - **Daily patterns**: Realistic passenger flow based on time of day
 - **Temporal consistency**: Coordinated updates across all data types
 
-### Bidirectional Route System
+## Architecture
 
-![Bidirectional Route](docs/diagrams/bidirectional_route.png)
+### High-Level Overview
+
+The system follows a producer-consumer pattern with three main layers:
+
+1. **Data Generation Layer (Fargate)**: Three feeder services continuously generate realistic bus operation data
+2. **Event & Storage Layer**: AWS Timestream stores time series data, EventBridge handles real-time events
+3. **API Layer (Lambda + API Gateway)**: REST and WebSocket APIs serve data to clients
+
+### Key Components
+
+**API Gateway:**
+- REST API with API key authentication for historical/latest queries
+- WebSocket API with custom authorizer for real-time updates
+
+**Lambda Functions:**
+- People Count API: Query passenger counts at bus stops
+- Sensors API: Query temperature, humidity, CO2, door status
+- Bus Position API: Query bus locations and passenger counts
+- WebSocket Handler: Manage real-time subscriptions and broadcasts
+- WebSocket Authorizer: Validate API keys for WebSocket connections
+
+**MCP Server (ECS Fargate):**
+- Programmatic access to Timestream data via Model Context Protocol
+- Deployed on ECS in private subnets with API Gateway HTTP API access
+- Five tools for querying people count, sensors, bus positions, and time ranges
+- Authentication via x-api-key and x-group-name headers (same as REST APIs)
+- CloudWatch Logs at `/ecs/mcp-server`
+
+**Fargate Services:**
+- People Count Feeder: Generates passenger arrival/departure data
+- Sensors Feeder: Generates environmental sensor readings
+- Bus Position Feeder: Simulates bus movement along routes
+
+**Storage:**
+- Timestream: Time series database (24h memory + 30d magnetic)
+- DynamoDB: WebSocket connection tracking
+- S3: Configuration storage (lines.yaml)
+
+**Event Processing:**
+- EventBridge: Routes real-time bus position events to WebSocket clients
+
+### Bidirectional Route System
 
 The simulator implements realistic bidirectional bus routes:
 
@@ -95,8 +72,6 @@ The simulator implements realistic bidirectional bus routes:
   - Position resets to 0.0 for return journey
 - **Inbound (Direction = 1)**: Buses travel the return route back to origin
 - **Direction Consistency**: Direction value remains constant between terminal stops
-
-This ensures realistic bus operations where buses complete round trips on their routes.
 
 ## Prerequisites
 
@@ -140,16 +115,26 @@ make deploy AWS_REGION=eu-west-1
 cd terraform
 terraform output http_api_endpoint
 terraform output websocket_api_endpoint
+terraform output mcp_api_endpoint
 ```
 
 ### 5. Test the APIs
 
 ```bash
+# Get API key
+API_KEY=$(aws secretsmanager get-secret-value \
+  --secret-id bus-simulator/api-key \
+  --query SecretString --output text | jq -r '.api_key')
+
 # Get latest people count at stop S001
-curl "$(terraform output -raw http_api_endpoint)/people-count/S001?mode=latest"
+curl -H "x-api-key: $API_KEY" \
+     -H "x-group-name: test-group" \
+     "$(terraform output -raw http_api_endpoint)/people-count/S001?mode=latest"
 
 # Get latest bus position
-curl "$(terraform output -raw http_api_endpoint)/bus-position/B001?mode=latest"
+curl -H "x-api-key: $API_KEY" \
+     -H "x-group-name: test-group" \
+     "$(terraform output -raw http_api_endpoint)/bus-position/B001?mode=latest"
 ```
 
 ## Configuration
@@ -189,25 +174,28 @@ make load-config AWS_REGION=eu-west-1
 
 ## API Documentation
 
-See [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md) for complete API reference.
+See [docs/UI.md](docs/UI.md) for complete API reference.
 
 ### Quick Examples
 
 **REST API:**
 ```bash
 # Latest people count
-curl "{api-endpoint}/people-count/S001?mode=latest"
+curl -H "x-api-key: $API_KEY" -H "x-group-name: team-alpha" \
+  "{api-endpoint}/people-count/S001?mode=latest"
 
 # Historical sensor data
-curl "{api-endpoint}/sensors/bus/B001?timestamp=2026-02-22T10:00:00Z"
+curl -H "x-api-key: $API_KEY" -H "x-group-name: team-alpha" \
+  "{api-endpoint}/sensors/bus/B001?timestamp=2026-02-22T10:00:00Z"
 
 # All buses on a line
-curl "{api-endpoint}/bus-position/line/L1?mode=latest"
+curl -H "x-api-key: $API_KEY" -H "x-group-name: team-alpha" \
+  "{api-endpoint}/bus-position/line/L1?mode=latest"
 ```
 
 **WebSocket API:**
 ```javascript
-const ws = new WebSocket('wss://{websocket-endpoint}');
+const ws = new WebSocket('wss://{websocket-endpoint}?api_key=YOUR_KEY&group_name=team-alpha');
 ws.onopen = () => {
   ws.send(JSON.stringify({
     action: 'subscribe',
@@ -219,10 +207,7 @@ ws.onmessage = (event) => {
 };
 ```
 
-**MCP Server API:**
-
-The MCP server provides programmatic access to time series data via Model Context Protocol. It's deployed on ECS Fargate with external access through API Gateway.
-
+**MCP Server:**
 ```bash
 # Get API endpoint and key
 cd terraform
@@ -251,50 +236,43 @@ curl -X POST "${MCP_ENDPOINT}/mcp/call-tool" \
   }'
 ```
 
-See [mcp_server/README.md](mcp_server/README.md) for complete MCP server documentation including:
-- All five available tools (people count, sensors, bus position, line buses, time range)
-- Authentication requirements
-- ECS deployment architecture
-- CloudWatch Logs access
-- Troubleshooting guide
+## Testing
 
-## Development
+The project includes three levels of testing following the test pyramid approach:
 
-### Running Tests
+### Quick Start
 
 ```bash
-# Install development dependencies
-pip install -r requirements-dev.txt
-
 # Run all tests
-pytest tests/
+make test-all
 
-# Run with coverage
-pytest --cov=src tests/
-
-# Run property-based tests
-pytest tests/test_properties.py -v
+# Run specific test level
+make test-unit      # Unit tests (local, no AWS)
+make test-int       # Integration tests (Python + AWS)
+make test-e2e       # End-to-end tests (API shell scripts)
 ```
 
-### Building Lambda Packages
+### Test Levels
 
-```bash
-# Package all Lambda functions
-make package-all-lambdas
+**1. Unit Tests (Local, No AWS)**
+- Fast execution (< 1 minute)
+- Tests business logic, data models, utilities
+- No AWS credentials required
+- Uses mocks for external dependencies
 
-# Package a specific Lambda
-make package-lambda LAMBDA=people_count_api
-```
+**2. Integration Tests (Python + AWS)**
+- Moderate execution (5-10 minutes)
+- Tests AWS service interactions
+- Requires AWS credentials and deployed infrastructure
+- Tests Timestream, Secrets Manager, Lambda, MCP server
 
-### Local Development
+**3. End-to-End Tests (Shell Scripts)**
+- Complete user workflows (10-15 minutes)
+- Tests all public APIs via curl
+- Automatic configuration from Terraform outputs
+- Tests REST APIs, WebSocket, MCP server, authentication
 
-```bash
-# Build container images locally
-make build-feeders
-
-# Test image imports
-./scripts/test_images.sh
-```
+See [docs/ops_manual.md](docs/ops_manual.md) for detailed testing documentation.
 
 ## Deployment Timeline
 
@@ -325,74 +303,6 @@ The verification script checks:
 - ✓ API key authentication is enforced
 - ✓ WebSocket connections work properly
 
-See [docs/VERIFICATION_SCRIPT.md](docs/VERIFICATION_SCRIPT.md) for detailed documentation.
-
-## Testing
-
-The project includes three levels of testing following the test pyramid approach:
-
-### Quick Start
-
-```bash
-# Run all tests
-make test-all
-
-# Run specific test level
-make test-unit      # Unit tests (local, no AWS)
-make test-int       # Integration tests (Python + AWS)
-make test-e2e       # End-to-end tests (API shell scripts)
-```
-
-### Test Levels
-
-**1. Unit Tests (Local, No AWS)**
-- Fast execution (< 1 minute)
-- Tests business logic, data models, utilities
-- No AWS credentials required
-- Uses mocks for external dependencies
-
-```bash
-make test-unit
-```
-
-**2. Integration Tests (Python + AWS)**
-- Moderate execution (5-10 minutes)
-- Tests AWS service interactions
-- Requires AWS credentials and deployed infrastructure
-- Tests Timestream, Secrets Manager, Lambda, MCP server
-
-```bash
-make test-int
-```
-
-**3. End-to-End Tests (Shell Scripts)**
-- Complete user workflows (10-15 minutes)
-- Tests all public APIs via curl
-- Automatic configuration from Terraform outputs
-- Tests REST APIs, WebSocket, MCP server, authentication
-
-```bash
-make test-e2e
-```
-
-### Automatic Configuration
-
-E2E tests are fully autonomous and retrieve configuration automatically:
-- API key from Secrets Manager
-- API endpoints from Terraform outputs
-- AWS region from CLI configuration
-
-No manual configuration needed! Just run:
-
-```bash
-cd tests/api
-./test_people_count_latest.sh
-./test_mcp_health.sh
-./test_mcp_auth.sh
-```
-
-See [tests/TESTING_STRATEGY.md](tests/TESTING_STRATEGY.md) for detailed testing documentation.
-
 ## Monitoring
 
 ### CloudWatch Dashboards
@@ -421,9 +331,6 @@ aws logs filter-log-events \
   --log-group-name /ecs/mcp-server \
   --filter-pattern "your-group-name" \
   --region eu-west-1
-
-# Get last 100 log events
-aws logs tail /ecs/mcp-server --since 1h --region eu-west-1
 ```
 
 ## Cost Estimation
@@ -450,96 +357,37 @@ To destroy all infrastructure:
 make destroy AWS_REGION=eu-west-1
 ```
 
-## Troubleshooting
+## Project Structure
 
-### Feeder Services Not Starting
-
-Check ECS service status:
-```bash
-aws ecs describe-services \
-  --cluster bus-simulator-cluster \
-  --services people-count-feeder sensors-feeder bus-position-feeder \
-  --region eu-west-1
 ```
-
-Check CloudWatch logs:
-```bash
-aws logs tail /ecs/people-count-feeder --follow --region eu-west-1
+dataviz-bus-realtime/
+├── data/                    # Configuration files
+│   └── lines.yaml          # Bus lines configuration
+├── dataviz/                # Visualization examples
+│   ├── samples-001.py      # Example 1: People Count
+│   ├── samples-002.py      # Example 2: Bus Sensors
+│   ├── samples-003.py      # Example 3: Bus Positions
+│   ├── samples-004.py      # Example 4: Real-time Dashboard
+│   ├── samples-005.py      # Example 5: Sensor Comparison
+│   ├── samples-006.py      # Example 6: WebSocket
+│   └── README.md           # Examples documentation
+├── docker/                  # Dockerfiles for Fargate services
+├── docs/                    # Documentation
+│   ├── UI.md               # API documentation (REST, WebSocket, MCP)
+│   ├── ops_manual.md       # Operations manual
+│   └── deployment_manual.md # Deployment manual
+├── mcp_server/             # MCP server
+├── scripts/                 # Deployment and utility scripts
+├── src/
+│   ├── common/             # Shared utilities
+│   ├── feeders/            # Data generation services
+│   └── lambdas/            # API Lambda functions
+├── terraform/              # Infrastructure as Code
+│   └── modules/            # Terraform modules
+├── tests/                  # Unit and property tests
+├── Makefile               # Deployment automation
+└── README.md              # This file
 ```
-
-### API Returning 404
-
-Verify Timestream has data:
-```bash
-aws timestream-query query \
-  --query-string "SELECT COUNT(*) FROM bus_simulator.people_count" \
-  --region eu-west-1
-```
-
-### Lambda Timeout Errors
-
-Increase timeout in `terraform/modules/api-gateway/main.tf`:
-```hcl
-resource "aws_lambda_function" "people_count_api" {
-  timeout = 60  # Increase from 30
-  ...
-}
-```
-
-### MCP Server Issues
-
-#### MCP Server Not Responding
-
-1. Check ECS service status:
-   ```bash
-   aws ecs describe-services \
-     --cluster bus-simulator-cluster \
-     --services mcp-server \
-     --region eu-west-1
-   ```
-
-2. View MCP server logs:
-   ```bash
-   aws logs tail /ecs/mcp-server --follow --region eu-west-1
-   ```
-
-3. Verify API Gateway endpoint:
-   ```bash
-   cd terraform
-   terraform output mcp_api_endpoint
-   ```
-
-#### MCP Authentication Errors (401)
-
-1. Verify API key exists:
-   ```bash
-   aws secretsmanager get-secret-value --secret-id bus-simulator/api-key --region eu-west-1
-   ```
-
-2. Ensure both headers are present:
-   - `x-api-key`: API key from Secrets Manager
-   - `x-group-name`: Any string value for tracking
-
-3. Check authorizer logs:
-   ```bash
-   aws logs tail /aws/lambda/bus-simulator-rest-authorizer --follow --region eu-west-1
-   ```
-
-#### MCP Server Returns 502 Bad Gateway
-
-1. Check VPC Link status:
-   ```bash
-   cd terraform
-   aws apigatewayv2 get-vpc-link \
-     --vpc-link-id $(terraform output -raw mcp_vpc_link_id) \
-     --region eu-west-1
-   ```
-
-2. Verify security group allows traffic from VPC Link to ECS
-
-3. Check ECS task is running and healthy
-
-For detailed MCP server troubleshooting, see [mcp_server/README.md](mcp_server/README.md#troubleshooting).
 
 ## Contributing
 
@@ -566,115 +414,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 For issues or questions:
 - Open an issue on GitHub
-- Check the [API Documentation](docs/API_DOCUMENTATION.md)
+- Check the [API Documentation](docs/UI.md)
 - Review CloudWatch logs for debugging
-
-## Project Structure
-
-```
-dataviz-bus-realtime/
-├── data/                    # Configuration files
-│   └── lines.yaml          # Bus lines configuration
-├── docker/                  # Dockerfiles for Fargate services
-├── docs/                    # Documentation
-├── scripts/                 # Deployment and utility scripts
-├── src/
-│   ├── common/             # Shared utilities
-│   ├── feeders/            # Data generation services
-│   └── lambdas/            # API Lambda functions
-├── terraform/              # Infrastructure as Code
-│   └── modules/            # Terraform modules
-├── tests/                  # Unit and property tests
-├── Makefile               # Deployment automation
-└── README.md              # This file
-```
-
-## Overview
-
-This system simulates real-time bus operations through three APIs:
-- **People Count API**: Query passenger counts at bus stops
-- **Sensors API**: Access internal sensor data from buses and stops
-- **Bus Position API**: Track real-time bus positions (REST + WebSocket)
-
-## Architecture
-
-The system uses AWS services:
-- **Fargate**: Runs feeder services that generate simulated data
-- **Timestream**: Stores time series data
-- **API Gateway**: Exposes REST and WebSocket APIs
-- **Lambda**: Processes API requests
-- **EventBridge**: Routes real-time events
-- **Amazon Location**: Manages bus routes
-
-## Prerequisites
-
-- AWS Account
-- Terraform >= 1.0
-- Podman >= 4.0
-- Python >= 3.11
-- Make
-
-## Quick Start
-
-1. Configure AWS credentials:
-```bash
-aws configure
-```
-
-2. Package Lambda functions:
-```bash
-make package-all-lambdas
-```
-
-3. Deploy the system:
-```bash
-make deploy
-```
-
-4. Destroy the system:
-```bash
-make destroy
-```
-
-## Development
-
-### Packaging Lambda Functions
-
-Package a specific Lambda function:
-```bash
-make package-lambda LAMBDA=people_count_api
-```
-
-Package all Lambda functions:
-```bash
-make package-all-lambdas
-```
-
-The ZIP files will be created in the `build/` directory. See [docs/LAMBDA_DEPLOYMENT.md](docs/LAMBDA_DEPLOYMENT.md) for detailed packaging and deployment instructions.
-
-## Project Structure
-
-```
-dataviz-bus-realtime/
-├── src/                    # Python source code
-│   ├── feeders/           # Fargate feeder services
-│   ├── lambdas/           # Lambda function handlers
-│   └── common/            # Shared utilities and models
-├── terraform/             # Infrastructure as code
-├── docker/                # Dockerfiles for feeders
-├── data/                  # Configuration data
-├── scripts/               # Deployment and utility scripts
-└── tests/                 # Unit and property-based tests
-```
-
-## Configuration
-
-Edit `data/lines.yaml` to configure bus lines, stops, and buses.
-
-## API Documentation
-
-See [API.md](API.md) for detailed API documentation.
-
-## License
-
-See [LICENSE](LICENSE) for details.
+- See [Operations Manual](docs/ops_manual.md)
+- See [Deployment Manual](docs/deployment_manual.md)
