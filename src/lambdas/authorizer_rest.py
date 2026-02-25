@@ -36,6 +36,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     # Extract headers (case-insensitive)
     headers = event.get('headers', {})
     
+    # Handle null headers
+    if headers is None:
+        headers = {}
+    
     # Normalize header keys to lowercase for case-insensitive lookup
     headers_lower = {k.lower(): v for k, v in headers.items()}
     

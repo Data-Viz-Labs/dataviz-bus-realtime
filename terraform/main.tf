@@ -131,7 +131,7 @@ module "mcp_server" {
   # VPC and API Gateway configuration
   vpc_id                        = module.supporting.vpc_id
   vpc_link_security_group_id    = module.supporting.vpc_link_security_group_id
-  rest_authorizer_invoke_arn    = module.api_gateway.rest_authorizer_arn
+  rest_authorizer_invoke_arn    = module.api_gateway.rest_authorizer_invoke_arn
   rest_authorizer_function_name = "bus-simulator-rest-authorizer"
 
   # CORS configuration

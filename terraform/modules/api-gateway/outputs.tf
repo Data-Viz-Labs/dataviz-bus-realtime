@@ -62,6 +62,11 @@ output "rest_authorizer_arn" {
   value       = aws_lambda_function.rest_authorizer.arn
 }
 
+output "rest_authorizer_invoke_arn" {
+  description = "Invoke ARN of the REST API Custom Authorizer Lambda function for API Gateway v2"
+  value       = aws_lambda_function.rest_authorizer.invoke_arn
+}
+
 output "websocket_authorizer_arn" {
   description = "ARN of the WebSocket Custom Authorizer Lambda function"
   value       = aws_lambda_function.websocket_authorizer_v2.arn

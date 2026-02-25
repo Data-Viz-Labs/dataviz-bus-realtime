@@ -23,11 +23,11 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy MCP server code
-COPY __init__.py .
-COPY server.py .
-COPY auth.py .
-COPY config.json .
+# Copy MCP server code as a package
+COPY __init__.py ./mcp_server/
+COPY server.py ./mcp_server/
+COPY auth.py ./mcp_server/
+COPY config.json ./mcp_server/
 
 # Expose port for MCP protocol (stdio-based, but keeping for future HTTP support)
 EXPOSE 8080
@@ -43,4 +43,4 @@ ENV TIMESTREAM_DATABASE=bus_simulator \
 #   CMD python -c "import sys; sys.exit(0)"
 
 # Set entrypoint to run MCP server
-ENTRYPOINT ["python", "-m", "server"]
+ENTRYPOINT ["python", "-m", "mcp_server.server"]

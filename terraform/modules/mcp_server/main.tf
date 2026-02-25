@@ -213,8 +213,8 @@ resource "aws_apigatewayv2_api" "mcp" {
 
 # HTTP API Authorizer using existing REST authorizer Lambda
 resource "aws_apigatewayv2_authorizer" "mcp" {
-  api_id           = aws_apigatewayv2_api.mcp.id
-  authorizer_type  = "REQUEST"
+  api_id          = aws_apigatewayv2_api.mcp.id
+  authorizer_type = "REQUEST"
   # For HTTP APIs, use the invoke ARN directly (not the function ARN)
   authorizer_uri   = var.rest_authorizer_invoke_arn
   identity_sources = ["$request.header.x-api-key", "$request.header.x-group-name"]
