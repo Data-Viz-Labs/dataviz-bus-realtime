@@ -6,4 +6,4 @@ boto3>=1.34.0
 botocore>=1.34.0
 
 # YAML parser - used for configuration file loading
-pyyaml>=6.0
+pyyaml>=6.0.3
