@@ -285,7 +285,7 @@ def test_mcp_authentication(region: str, verbose: bool = False) -> Tuple[bool, s
         print_error("Could not retrieve API key from Secrets Manager")
         return False, "API key not found"
     
-    print_info(f"Using API key: {api_key[:8]}...")
+    print_info("Using API key (value hidden)")
     
     success, data, error = make_mcp_request(
         mcp_endpoint,

@@ -355,7 +355,7 @@ def test_rest_api_endpoints(region: str, verbose: bool = False) -> Tuple[bool, s
         return False, "Could not retrieve API key from Secrets Manager or Terraform"
     
     print_info(f"REST API Endpoint: {rest_endpoint}")
-    print_info(f"Using API key: {api_key[:8]}...")
+    print_info("Using API key (value hidden)")
     
     # Test endpoints
     import urllib.request
@@ -548,7 +548,7 @@ def test_rest_api_authentication(region: str, verbose: bool = False) -> Tuple[bo
     
     # Test 4: Request with valid API key and group name (should succeed)
     print("\nTest 4: Request with valid API key and group name")
-    print_info(f"Using API key: {api_key[:8]}...")
+    print_info("Using API key (value hidden)")
     
     try:
         req = urllib.request.Request(test_url)
@@ -593,7 +593,7 @@ def test_websocket_connection(region: str, verbose: bool = False) -> Tuple[bool,
         return False, "Could not retrieve API key from Secrets Manager or Terraform"
     
     print_info(f"WebSocket Endpoint: {ws_endpoint}")
-    print_info(f"Using API key: {api_key[:8]}...")
+    print_info("Using API key (value hidden)")
     
     # Try to import websocket library
     try:
