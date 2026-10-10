@@ -1,0 +1,34 @@
+# Generado automáticamente: una PR por dependencia (sin agrupar).
+version: 2
+updates:
+  - package-ecosystem: "docker"
+    directories:
+      - "/docker"
+      - "/mcp_server"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+  - package-ecosystem: "pip"
+    directories:
+      - "/"
+      - "/mcp_server"
+      - "/src/feeders"
+      - "/src/lambdas"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+  - package-ecosystem: "terraform"
+    directories:
+      - "/terraform"
+      - "/terraform/modules/api-gateway"
+      - "/terraform/modules/cost-management"
+      - "/terraform/modules/eventbridge"
+      - "/terraform/modules/fargate"
+      - "/terraform/modules/iam"
+      - "/terraform/modules/location"
+      - "/terraform/modules/mcp_server"
+      - "/terraform/modules/supporting"
+      - "/terraform/modules/timestream"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
