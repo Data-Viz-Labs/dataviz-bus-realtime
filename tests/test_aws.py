@@ -9,7 +9,7 @@ from botocore.response import StreamingBody
 from botocore.stub import ANY, Stubber
 import pytest
 
-from sim.aws import LocationPublisher, SiteStore, snapshot_payload, stop_geofences, sync_geofences
+from sim.aws import DataStore, LocationPublisher, SiteStore, snapshot_payload, stop_geofences, sync_geofences
 from sim.config import build_world
 from tests.conftest import MINI_YAML
 
@@ -78,7 +78,7 @@ def test_snapshot_is_public_and_short_lived(world):
         SiteStore(s3, "site").put_snapshot(result)
     payload = snapshot_payload(result)
     assert len(payload["buses"]) == 7 and set(payload["buses"][0]) == {"id", "line", "lat", "lon", "passengers",
-                                                                          "direction"}
+                                                                          "direction", "next_stop_id"}
 
 
 def body(payload: dict) -> StreamingBody:
@@ -88,12 +88,11 @@ def body(payload: dict) -> StreamingBody:
 
 def test_state_round_trip_and_expiry(world):
     s3 = client("s3")
-    store = SiteStore(s3, "site")
+    store = DataStore(s3, "data")
     fresh = {"saved_at": datetime.now(UTC).isoformat(), "world": world.to_state()}
     stale = {"saved_at": (datetime.now(UTC) - timedelta(hours=2)).isoformat(), "world": world.to_state()}
     with Stubber(s3) as stub:
-        stub.add_response("put_object", {}, {"Bucket": "site", "Key": "state/world.json", "Body": ANY,
-                                             "ContentType": "application/json"})
+        stub.add_response("put_object", {}, {"Bucket": "data", "Key": "private/world.json", "Body": ANY})
         store.save_state(world)
         stub.add_response("get_object", {"Body": body(fresh)})
         assert store.load_state(timedelta(minutes=15)) == world.to_state()
@@ -101,3 +100,12 @@ def test_state_round_trip_and_expiry(world):
         assert store.load_state(timedelta(minutes=15)) is None
         stub.add_client_error("get_object", "NoSuchKey", http_status_code=404)
         assert store.load_state(timedelta(minutes=15)) is None
+
+
+def test_history_until_marker():
+    s3 = client("s3")
+    with Stubber(s3) as stub:
+        stub.add_response("get_object", {"Body": body({"until": "2026-10-09T15:00:00"})})
+        assert DataStore(s3, "data").history_until() == datetime(2026, 10, 9, 15)
+        stub.add_client_error("get_object", "NoSuchKey", http_status_code=404)
+        assert DataStore(s3, "data").history_until() is None

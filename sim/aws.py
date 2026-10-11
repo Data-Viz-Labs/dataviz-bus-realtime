@@ -108,7 +108,7 @@ def snapshot_payload(result: TickResult) -> dict:
         "time": result.time.isoformat(),
         "buses": [
             {"id": b.bus_id, "line": b.line_id, "lat": round(b.lat, 6), "lon": round(b.lon, 6),
-             "passengers": b.passengers, "direction": b.direction}
+             "passengers": b.passengers, "direction": b.direction, "next_stop_id": b.next_stop_id}
             for b in result.buses
         ],
         "waiting": {k: v for k, v in result.waiting.items() if v},
@@ -116,38 +116,59 @@ def snapshot_payload(result: TickResult) -> dict:
 
 
 class SiteStore:
-    """The site bucket: ``live/`` is public through CloudFront, ``state/`` is private."""
+    """The site bucket: ``live/`` is public through CloudFront."""
 
-    SNAPSHOT, CONFIG, STATE = "live/snapshot.json", "live/config.json", "state/world.json"
+    SNAPSHOT, CONFIG = "live/snapshot.json", "live/config.json"
 
     def __init__(self, client, bucket: str):
         self.client = client
         self.bucket = bucket
 
-    def _put(self, key: str, payload: dict, max_age: int | None) -> None:
-        extra = {"CacheControl": f"public, max-age={max_age}"} if max_age is not None else {}
+    def _put(self, key: str, payload: dict, max_age: int) -> None:
         self.client.put_object(Bucket=self.bucket, Key=key, Body=json.dumps(payload, separators=(",", ":")).encode(),
-                               ContentType="application/json", **extra)
+                               ContentType="application/json", CacheControl=f"public, max-age={max_age}")
 
     def put_snapshot(self, result: TickResult) -> None:
         self._put(self.SNAPSHOT, snapshot_payload(result), max_age=5)
 
-    def put_config(self, region: str, map_key: str | None) -> None:
-        self._put(self.CONFIG, {"region": region, "mapKey": map_key}, max_age=300)
+    def put_config(self, region: str, map_key: str | None, api_url: str | None = None) -> None:
+        self._put(self.CONFIG, {"region": region, "mapKey": map_key, "apiUrl": api_url}, max_age=300)
 
-    def save_state(self, world: World) -> None:
-        self._put(self.STATE, {"saved_at": datetime.now(UTC).isoformat(), "world": world.to_state()}, max_age=None)
 
-    def load_state(self, max_age: timedelta) -> dict | None:
+class DataStore:
+    """The private data bucket: ``history/`` (Parquet, read through Athena/the API) and
+    ``private/`` (world state for restarts, the scenario and the end of the generated history)."""
+
+    STATE, SCENARIO, UNTIL = "private/world.json", "private/scenario.json", "private/history_until.json"
+
+    def __init__(self, client, bucket: str):
+        self.client = client
+        self.bucket = bucket
+
+    def put(self, key: str, data: bytes) -> None:
+        self.client.put_object(Bucket=self.bucket, Key=key, Body=data)
+
+    def get_json(self, key: str) -> dict | None:
         from botocore.exceptions import ClientError  # botocore is only needed when running on AWS
 
         try:
-            body = self.client.get_object(Bucket=self.bucket, Key=self.STATE)["Body"].read()
+            body = self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
         except ClientError as e:
             if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
                 return None
             raise
-        saved = json.loads(body)
-        if datetime.now(UTC) - datetime.fromisoformat(saved["saved_at"]) > max_age:
+        return json.loads(body)
+
+    def save_state(self, world: World) -> None:
+        payload = {"saved_at": datetime.now(UTC).isoformat(), "world": world.to_state()}
+        self.put(self.STATE, json.dumps(payload, separators=(",", ":")).encode())
+
+    def load_state(self, max_age: timedelta) -> dict | None:
+        saved = self.get_json(self.STATE)
+        if not saved or datetime.now(UTC) - datetime.fromisoformat(saved["saved_at"]) > max_age:
             return None
         return saved["world"]
+
+    def history_until(self) -> datetime | None:
+        marker = self.get_json(self.UNTIL)
+        return datetime.fromisoformat(marker["until"]) if marker else None

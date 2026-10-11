@@ -21,6 +21,9 @@ def export(lines_path: str, network_path: str | None) -> dict:
             "name": line.name,
             "color": line.color,
             "capacity": int((entries[line_id].get("buses") or {}).get("capacity", 90)),
+            "buses": int((entries[line_id].get("buses") or {}).get("count", 1)),
+            "outbound": [s.stop_id for s in line.legs[0].stops],
+            "inbound": [s.stop_id for s in line.legs[1].stops] if len(line.legs) > 1 else [],
             "path": [[round(lon, 5), round(lat, 5)] for lat, lon in line.path.points],
         }
         for s in line.stops:
