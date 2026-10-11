@@ -47,6 +47,17 @@ docs for every surface.
 - Memory bank, AGENTS.md, `.editorconfig`, `.tool-versions` written; changes committed in
   functional groups (Conventional Commits).
 
+## 4. Repository reorganisation (same day, after the user pushed)
+
+- The user wanted fewer, functional top-level folders with three-letter names. Agreed layout: TLA for moving
+  parts (`iac`, `src`, `bin`, `web`), conventional names where tools expect them (`docs`, `tests`,
+  `examples`, `data`, `memory-bank`).
+- Done with `git mv` + reference fixes in one commit. Pitfalls met: a blanket `tools/` -> `bin/` rewrite also
+  hit the MCP methods `tools/list` / `tools/call` (restored; contract tests would have failed);
+  `tests/lambda` cannot be a package (`lambda` is a keyword) -> `tests/lambdas`.
+- Verified: 149 tests, generated files unchanged, `make run`, `make preview`, Terraform 1.11 validate + fmt
+  for `iac/stack` and `iac/bootstrap`, actionlint.
+
 ## Working practices that paid off
 
 - Reproduce before fixing; measure (time, memory, prices) before choosing an architecture.

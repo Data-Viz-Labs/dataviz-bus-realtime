@@ -47,7 +47,7 @@ decisions and why they were taken.
 
 ## Access and APIs
 
-- One key per group (`terraform/access.tf`, `random_password`); Lambdas only get SHA-256 hashes.
+- One key per group (`iac/stack/access.tf`, `random_password`); Lambdas only get SHA-256 hashes.
 - MQTT: IoT custom authorizer (signing disabled) accepts the key as MQTT password, WSS query
   `token` or `x-api-key` header; subscribe-only policy on `madrid/*`.
 - HTTP API + MCP: one Lambda behind a function URL (auth NONE, key checked in code). Athena with
@@ -55,11 +55,18 @@ decisions and why they were taken.
   (workgroup), result limits. MCP: stateless Streamable HTTP, JSON responses.
 - Glue tables use partition projection (`month=YYYY-MM`, `dt=YYYY-MM-DD`): no crawlers.
 
+## Repository layout
+
+Grouped by what gets deployed and how (details and rules in `AGENTS.md`): `iac/` Terraform, `src/container/`
+the Fargate image (built with the repo root as context, so `data/` is baked in), `src/lambda/` one folder per
+Lambda, `bin/` operator scripts, `web/` static site, `data/` shared inputs, `docs/`, `tests/` mirroring the code.
+The Python package stays `sim` (`pyproject` finds it under `src/container`), so imports never changed.
+
 ## Delivery
 
 - Terraform owns infrastructure; the ECS service ignores `task_definition` and `desired_count`
   so the `deploy-app` workflow and `make stop/start` own them.
-- GitHub Actions with OIDC roles from `terraform/bootstrap` (plan role read-only, deploy role in
-  environment `production`). See `docs/deploy.md`.
+- GitHub Actions with OIDC roles from `iac/bootstrap` (plan role read-only, deploy role in
+  environment `production`). See `docs/ops/deploy.md`.
 - Image `CMD` (not `ENTRYPOINT`) so `make backfill` can run `python -m sim.backfill` on the same
   task definition with a 4 vCPU / 8 GB override.

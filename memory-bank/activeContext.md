@@ -10,6 +10,11 @@ been deployed** and the image has never been built.
 
 ## Recent changes (this evolution)
 
+- **Repository reorganised** (TLA + conventions): `iac/{stack,bootstrap,modules}`, `src/container`
+  (Dockerfile + `sim`), `src/lambda/{api,iot-authorizer}`, `bin/` (was `tools/`), `docs/{api,ops,guides,img}`,
+  `tests/{sim,lambdas,bin,contracts}`. Layout rules in `AGENTS.md`. Terraform resource addresses did not
+  change (no state moves); the backend config now lives at `iac/stack/backend.hcl`.
+
 - `sim/scenario.py`: secret scenario (line targets by centrality, overloaded peripheral line,
   calendar, events). Overloaded-line candidates widened to the 40 % farthest lines by rank after
   noticing only 4 candidates with a distance threshold.
@@ -17,17 +22,17 @@ been deployed** and the image has never been built.
   hourly model, per-day microsimulation workers (memory fix after an OOM).
 - `sim/service.py`: live service now loads the scenario, records history after
   `private/history_until.json`, publishes MQTT; state moved to the data bucket.
-- `sim/mqtt.py`, `lambdas/iot_authorizer`, `lambdas/api` (REST + MCP), Terraform `iot.tf`,
-  `api.tf`, `history.tf`, `access.tf`, budgets module rewrite, `terraform/bootstrap`.
+- `sim/mqtt.py`, `src/lambda/iot-authorizer`, `src/lambda/api` (REST + MCP), Terraform `iot.tf`,
+  `api.tf`, `history.tf`, `access.tf`, budgets module rewrite, `iac/bootstrap`.
 - Workflows `deploy-app`, `deploy-web`, `infra`; Makefile runbook targets.
-- Docs: `docs/api/{openapi.yaml,asyncapi.yaml,mcp.md,datasets.md}`, `docs/deploy.md`,
-  `docs/participantes.md`, README rewrite, `AGENTS.md`.
+- Docs: `docs/api/{openapi.yaml,asyncapi.yaml,mcp.md,datasets.md}`, `docs/ops/deploy.md`,
+  `docs/guides/participantes.md`, README rewrite, `AGENTS.md`.
 
 ## Next steps
 
 1. `asdf install terraform 1.11.4` (or equivalent) on the operator machine.
 2. Admin: `make bootstrap`, create GitHub environment `production`, `make gh-vars`
-   (`docs/deploy.md`).
+   (`docs/ops/deploy.md`).
 3. Optional: `make network` (Amazon Location Routes, ~140 requests) and commit `data/network.json`.
 4. Day before the event: `make deploy`, `make backfill YEARS=3`, `make keys`, `make smoke`;
    verify `docs.html`, MQTT (`make mqtt-sub KEY=...`), API and MCP with a real key.

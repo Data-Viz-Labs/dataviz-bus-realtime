@@ -14,7 +14,7 @@ stops were never served. It also relied on Timestream, closed to new customers s
 | Participants (12 groups by default) | live state, history, SQL | MQTT, HTTP API, MCP, Parquet, web map |
 | Organisers | deploy, generate history, hand out keys, check answers | Makefile, GitHub Actions, `private/scenario.json` |
 
-Participants get one key per group and the guide `docs/participantes.md` (Spanish). The answer
+Participants get one key per group and the guide `docs/guides/participantes.md` (Spanish). The answer
 key (the generated scenario) is only in the private part of the data bucket.
 
 ## Experience goals

@@ -7,15 +7,32 @@ current state and the next steps. Stable documentation lives in `README.md` and 
 ## What this is
 
 A real-time simulator of 40 real EMT Madrid bus lines with years of synthetic history, run on
-AWS for one-day data hackathons. See `README.md` for the architecture and `docs/deploy.md` for
+AWS for one-day data hackathons. See `README.md` for the architecture and `docs/ops/deploy.md` for
 operations.
+
+## Repository layout (where things go)
+
+| Path | Contents | Rule |
+|---|---|---|
+| `iac/stack/` | Terraform root of the platform | one file per concern (`simulator.tf`, `site.tf`, `api.tf`...) |
+| `iac/bootstrap/` | state bucket + GitHub OIDC roles (local state) | run once per account |
+| `iac/modules/` | reusable Terraform modules | |
+| `src/container/` | everything baked into the Fargate image: `Dockerfile`, package `sim` | build context is the repo root (`-f src/container/Dockerfile`) |
+| `src/lambda/<name>/` | one folder per Lambda, zipped by Terraform | stdlib + boto3, unique module names |
+| `bin/` | operator and data scripts, run from the repo root | import `sim` as an installed package, no `sys.path` tricks |
+| `web/` | static site (map, API docs page) | |
+| `data/` | network inputs shared by image, site and scripts | generated, see below |
+| `docs/` | `api/` contracts, `ops/` runbooks, `guides/` audience docs, `img/` | stable docs only |
+| `tests/` | `sim/`, `lambdas/` (not `lambda`: Python keyword), `bin/`, `contracts/` | mirror the code they test |
+| `examples/` | participant-facing examples | |
+| `memory-bank/` | living project knowledge | update at the end of significant work |
 
 ## Language
 
 - Code, identifiers, comments, docstrings, commit messages, PR text, Terraform and technical
   docs: **English**.
 - Audience-facing Spanish is deliberate in two places only: the web map labels (`web/index.html`)
-  and the participants' guide (`docs/participantes.md`).
+  and the participants' guide (`docs/guides/participantes.md`).
 
 ## Commands
 
@@ -24,12 +41,12 @@ make venv        # Python 3.12 virtualenv (.[aws,dev])
 make test        # ruff + pytest; must stay green and fast (~20 s)
 make run         # local health summary of the simulation
 make preview     # local map at http://localhost:8000
-make schemas     # regenerate terraform/history_schema.json, docs/api/datasets.md, MCP tool docs
+make schemas     # regenerate iac/stack/history_schema.json, docs/api/datasets.md, MCP tool docs
 make help        # everything else (deploy, backfill, keys, stop...)
 ```
 
 Terraform needs >= 1.10 (`.tool-versions`). Validate with
-`terraform -chdir=terraform init -backend=false && terraform -chdir=terraform validate` and keep
+`terraform -chdir=iac/stack init -backend=false && terraform -chdir=iac/stack validate` and keep
 `terraform fmt -recursive` clean; CI checks both.
 
 ## Code style
@@ -39,10 +56,10 @@ Terraform needs >= 1.10 (`.tool-versions`). Validate with
 - Match the surrounding code: concise modules, a module docstring that explains the *why*,
   short function docstrings, comments only where the code is not obvious. No dead code, no
   commented-out code, no speculative abstractions.
-- `sim/` core (`network`, `engine`, `demand`, `scenario`, `history`, `config`) must not import
+- `src/container/sim/` core (`network`, `engine`, `demand`, `scenario`, `history`, `config`) must not import
   AWS libraries. AWS lives in adapters (`sim/aws.py`, `sim/mqtt.py`) and the services
   (`sim/service.py`, `sim/backfill.py`); boto3/pyarrow are imported lazily where the core uses them.
-- Lambdas (`lambdas/`) use the standard library and boto3 only. Module names must be unique
+- Lambdas (`src/lambda/`) use the standard library and boto3 only. Module names must be unique
   across lambdas (tests import them by path).
 - Positions are metres along a circuit and stops are visit indices: never compare floats to
   detect arrivals.
@@ -51,8 +68,8 @@ Terraform needs >= 1.10 (`.tool-versions`). Validate with
 
 | Source | Generated artefacts | Command |
 |---|---|---|
-| `sim/history.py` `SCHEMAS` | `terraform/history_schema.json`, `docs/api/datasets.md` | `make schemas` |
-| MCP tool definitions in `lambdas/api/api_mcp.py` | tool section of `docs/api/mcp.md` | `make schemas` |
+| `src/container/sim/history.py` `SCHEMAS` | `iac/stack/history_schema.json`, `docs/api/datasets.md` | `make schemas` |
+| MCP tool definitions in `src/lambda/api/api_mcp.py` | tool section of `docs/api/mcp.md` | `make schemas` |
 | EMT GTFS feed | `data/lines.yaml` | `make import-gtfs` |
 | Amazon Location Routes | `data/network.json` | `make network` |
 | `data/lines.yaml` (+ network.json) | `web/network.json` (not committed) | `make web` |
@@ -91,11 +108,11 @@ Types used: `feat`, `fix`, `test`, `docs`, `ci`, `build`, `chore`, `refactor`. S
   user's explicit go-ahead. Read-only checks (pricing API, docs) are fine.
 - Amazon Location tracker writes and geofence evaluations are billed per position: keep
   `tracked_lines` small and `stop_geofences` off by default. Budgets alert by email
-  (`terraform/modules/cost-management`).
+  (`iac/modules/cost-management`).
 - The generated scenario is the organisers' answer key: it stays in `private/` of the data bucket,
   is never served, and logs print event *counts* only, never dates or venues.
 - Memory: never materialise full history tables as Python objects (`stop_hourly` is tens of
   millions of rows). Stream with `history.ParquetStream`, aggregate with Arrow, keep backfill
   workers <= 4 (~400 MB each).
-- Never commit secrets, `terraform/backend.hcl`, state files, `.cache/` or generated
+- Never commit secrets, `iac/stack/backend.hcl`, state files, `.cache/` or generated
   `web/network.json`.
