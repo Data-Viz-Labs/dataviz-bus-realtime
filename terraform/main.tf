@@ -1,10 +1,21 @@
 terraform {
-  required_version = ">= 1.5"
+  required_version = ">= 1.10"
+
+  # Partial configuration: `make init` passes backend.hcl (written by terraform/bootstrap).
+  backend "s3" {}
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 6.33"
+    }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.7"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
     }
   }
 }
@@ -28,7 +39,8 @@ locals {
 module "cost_management" {
   source = "./modules/cost-management"
 
+  name                 = local.name
+  daily_budget_limit   = var.daily_budget_limit
   monthly_budget_limit = var.monthly_budget_limit
   budget_alert_emails  = var.budget_alert_emails
-  tags                 = var.tags
 }

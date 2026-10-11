@@ -1,5 +1,6 @@
 # The simulator: one long-running Fargate task that owns every bus and every stop queue. It
-# writes the live snapshot to the site bucket and the tracked buses to Amazon Location.
+# publishes the live snapshot (site bucket), MQTT (IoT Core), the tracked buses (Amazon
+# Location) and history (data bucket). The same task definition runs `python -m sim.backfill`.
 
 resource "aws_ecr_repository" "simulator" {
   name                 = "${local.name}-simulator"
@@ -82,23 +83,23 @@ data "aws_iam_policy_document" "simulator" {
     }
   }
   statement {
-    sid       = "PublishSnapshotAndState"
+    sid       = "PublishSnapshot"
     actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.site.arn}/live/*", "${aws_s3_bucket.site.arn}/state/*"]
+    resources = ["${aws_s3_bucket.site.arn}/live/*"]
   }
   statement {
-    sid       = "ReadState"
-    actions   = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.site.arn}/state/*"]
+    sid       = "HistoryAndPrivateState"
+    actions   = ["s3:PutObject", "s3:GetObject"]
+    resources = ["${aws_s3_bucket.data.arn}/history/*", "${aws_s3_bucket.data.arn}/private/*"]
   }
   statement {
-    sid       = "StateMissingIsNotAnError" # without ListBucket a missing key is a 403, not a 404
+    sid       = "MissingKeyIsNotAnError" # without ListBucket a missing key is a 403, not a 404
     actions   = ["s3:ListBucket"]
-    resources = [aws_s3_bucket.site.arn]
+    resources = [aws_s3_bucket.data.arn]
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
-      values   = ["state/*"]
+      values   = ["private/*", "history/*"]
     }
   }
 }
@@ -163,6 +164,9 @@ resource "aws_ecs_task_definition" "simulator" {
     essential = true
     environment = [
       { name = "SITE_BUCKET", value = aws_s3_bucket.site.id },
+      { name = "DATA_BUCKET", value = aws_s3_bucket.data.id },
+      { name = "MQTT_ENDPOINT", value = local.mqtt_endpoint },
+      { name = "API_URL", value = trimsuffix(aws_lambda_function_url.api.function_url, "/") },
       { name = "TRACKER_NAME", value = aws_location_tracker.buses.tracker_name },
       { name = "TRACKED_LINES", value = var.tracked_lines },
       { name = "GEOFENCE_COLLECTION", value = var.stop_geofences ? aws_location_geofence_collection.stops[0].collection_name : "" },
@@ -203,5 +207,10 @@ resource "aws_ecs_service" "simulator" {
   deployment_circuit_breaker {
     enable   = true
     rollback = true
+  }
+
+  # The deploy-app workflow registers new task revisions; `make stop/start` changes the count.
+  lifecycle {
+    ignore_changes = [task_definition, desired_count]
   }
 }

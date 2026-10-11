@@ -15,19 +15,24 @@ resource "aws_s3_bucket_public_access_block" "site" {
 }
 
 locals {
+  # published key => [source file, content type]
   site_files = {
-    "index.html"   = "text/html; charset=utf-8"
-    "network.json" = "application/json"
+    "index.html"         = ["web/index.html", "text/html; charset=utf-8"]
+    "docs.html"          = ["web/docs.html", "text/html; charset=utf-8"]
+    "network.json"       = ["web/network.json", "application/json"]
+    "docs/openapi.yaml"  = ["docs/api/openapi.yaml", "application/yaml"]
+    "docs/asyncapi.yaml" = ["docs/api/asyncapi.yaml", "application/yaml"]
   }
 }
 
+# First publication; afterwards the deploy-web workflow updates the same objects.
 resource "aws_s3_object" "site" {
   for_each      = local.site_files
   bucket        = aws_s3_bucket.site.id
   key           = each.key
-  source        = "${local.repo_root}/web/${each.key}"
-  etag          = filemd5("${local.repo_root}/web/${each.key}")
-  content_type  = each.value
+  source        = "${local.repo_root}/${each.value[0]}"
+  etag          = filemd5("${local.repo_root}/${each.value[0]}")
+  content_type  = each.value[1]
   cache_control = "public, max-age=300"
 }
 

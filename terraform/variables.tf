@@ -58,10 +58,22 @@ variable "subnet_ids" {
   default     = []
 }
 
-variable "monthly_budget_limit" {
-  description = "Monthly budget in USD for alerts"
+variable "groups" {
+  description = "Hackathon groups; each gets an access key for MQTT and the API"
+  type        = list(string)
+  default     = ["team-01", "team-02", "team-03", "team-04", "team-05", "team-06", "team-07", "team-08", "team-09", "team-10", "team-11", "team-12"]
+}
+
+variable "daily_budget_limit" {
+  description = "Daily cost budget in USD (the event runs for about a day)"
   type        = number
-  default     = 100
+  default     = 25
+}
+
+variable "monthly_budget_limit" {
+  description = "Monthly cost budget in USD; alerts on actual and forecasted spend"
+  type        = number
+  default     = 60
 }
 
 variable "budget_alert_emails" {
