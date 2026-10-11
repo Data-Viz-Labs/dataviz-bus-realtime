@@ -1,0 +1,293 @@
+asyncapi: 3.0.0
+info:
+  title: Madrid Bus Simulator - real-time feed
+  version: 1.0.0
+  description: |
+    Live MQTT feed of the Madrid bus simulation (40 real EMT Madrid lines), served by AWS IoT Core.
+    The simulator is the only publisher; hackathon groups **subscribe** with their group access key.
+
+    * `madrid/lines/{line_id}/state` - **retained**, every 5 s: every bus of the line and the people
+      waiting at its stops. A new subscriber receives the last state immediately.
+    * `madrid/lines/{line_id}/calls` - every stop call of the line (alighted/boarded passengers),
+      published each simulation tick (5 s) in which the line had at least one call. Not retained.
+
+    Wildcards work as in any MQTT broker: `madrid/lines/+/state` (all lines' state),
+    `madrid/lines/+/calls` (every stop call of the network), `madrid/lines/27/#` (everything about line 27).
+    The simulation publishes about 40 state messages and 25 call messages every 5 s, so subscribe
+    to the lines you need. Messages are QoS 0 (at most once); publishing is denied to students.
+
+    Times are ISO 8601 with the Europe/Madrid offset (simulated time runs in real time).
+    Directions: `0` outbound, `1` inbound (circular lines only have `0`).
+  license:
+    name: MIT
+  tags:
+    - name: hackathon
+defaultContentType: application/json
+
+servers:
+  production:
+    host: '{endpoint}'
+    pathname: /mqtt
+    protocol: wss
+    description: |
+      MQTT over WebSockets (TLS, port 443). Connect to
+      `wss://{endpoint}/mqtt?x-amz-customauthorizer-name={authorizer}&token={key}`.
+      `terraform output mqtt_websocket_url` and `mqtt_authorizer_name` give the values.
+    variables:
+      endpoint:
+        description: AWS IoT Core data endpoint (`terraform output mqtt_endpoint`), e.g. `abc123-ats.iot.eu-west-1.amazonaws.com`.
+        default: example-ats.iot.eu-west-1.amazonaws.com
+    security:
+      - $ref: '#/components/securitySchemes/groupKeyQuery'
+    bindings:
+      mqtt:
+        bindingVersion: 0.2.0
+        keepAlive: 60
+  production-mqtts:
+    host: '{endpoint}:443'
+    protocol: mqtts
+    description: |
+      Plain MQTT over TLS on port 443. IoT Core needs the ALPN protocol name `mqtt` on this port.
+      Username `?x-amz-customauthorizer-name={authorizer}` (anything before `?` is ignored),
+      password = the group key.
+    variables:
+      endpoint:
+        description: AWS IoT Core data endpoint.
+        default: example-ats.iot.eu-west-1.amazonaws.com
+    security:
+      - $ref: '#/components/securitySchemes/groupKeyMqtt'
+
+channels:
+  lineState:
+    address: madrid/lines/{line_id}/state
+    title: Line state
+    description: |
+      Snapshot of one line every 5 s, **retained** (the broker keeps the last one and sends it on subscribe).
+      Subscribe to `madrid/lines/+/state` for the whole network.
+    parameters:
+      line_id:
+        $ref: '#/components/parameters/line_id'
+    messages:
+      lineState:
+        $ref: '#/components/messages/lineState'
+    bindings:
+      mqtt:
+        bindingVersion: 0.2.0
+  lineCalls:
+    address: madrid/lines/{line_id}/calls
+    title: Stop calls
+    description: |
+      The stop calls of one line during the last tick (5 s). Not retained, only published when the
+      line had calls. Subscribe to `madrid/lines/+/calls` for the whole network.
+    parameters:
+      line_id:
+        $ref: '#/components/parameters/line_id'
+    messages:
+      lineCalls:
+        $ref: '#/components/messages/lineCalls'
+
+operations:
+  receiveLineState:
+    action: receive
+    channel:
+      $ref: '#/channels/lineState'
+    summary: Follow the buses of a line and the queues at its stops.
+    bindings:
+      mqtt:
+        bindingVersion: 0.2.0
+        qos: 0
+    messages:
+      - $ref: '#/channels/lineState/messages/lineState'
+  receiveLineCalls:
+    action: receive
+    channel:
+      $ref: '#/channels/lineCalls'
+    summary: Receive every stop call (boardings, alightings, people left behind).
+    bindings:
+      mqtt:
+        bindingVersion: 0.2.0
+        qos: 0
+    messages:
+      - $ref: '#/channels/lineCalls/messages/lineCalls'
+
+components:
+  parameters:
+    line_id:
+      description: EMT Madrid line id as in `data/lines.yaml` (e.g. `27`, `5`, `C1`), or `+` to match every line.
+      examples: ['27', 'C1']
+
+  securitySchemes:
+    groupKeyQuery:
+      type: httpApiKey
+      name: token
+      in: query
+      description: |
+        AWS IoT Core custom authorizer (signing disabled). Add both query parameters to the WebSocket URL:
+        `x-amz-customauthorizer-name={authorizer}` and `token={group key}`. An `x-api-key` header
+        with the key is also accepted. The granted policy allows `iot:Connect` (any client id),
+        `iot:Subscribe` / `iot:Receive` on `madrid/*`; connections last at most 24 h.
+    groupKeyMqtt:
+      type: userPassword
+      description: |
+        Same custom authorizer over MQTT: username `?x-amz-customauthorizer-name={authorizer}`,
+        password = the group key.
+
+  messages:
+    lineState:
+      name: lineState
+      title: Line state
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/LineState'
+      bindings:
+        mqtt:
+          bindingVersion: 0.2.0
+      examples:
+        - name: line27
+          summary: Line 27 (Embajadores - Plaza de Castilla), truncated to two buses
+          payload:
+            time: '2026-10-12T08:00:05+02:00'
+            line_id: '27'
+            buses:
+              - {id: 27-01, direction: 0, lat: 40.40539, lon: -3.70242, passengers: 12, load: 0.133,
+                 state: dwelling, next_stop_id: '85'}
+              - {id: 27-02, direction: 0, lat: 40.40433, lon: -3.69578, passengers: 31, load: 0.344,
+                 state: driving, next_stop_id: '88'}
+            waiting: {'85': 4, '5511': 2, '72': 7}
+    lineCalls:
+      name: lineCalls
+      title: Stop calls
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/LineCalls'
+      examples:
+        - name: line27
+          summary: Three stop calls of line 27 in one tick
+          payload:
+            time: '2026-10-12T08:08:30+02:00'
+            line_id: '27'
+            calls:
+              - {time: '2026-10-12T08:08:27.892+02:00', bus_id: 27-09, stop_id: '44', direction: 0, terminal: false,
+                 alighted: 3, boarded: 4, passengers_after: 26, left_behind: 0, leg_minutes: null}
+              - {time: '2026-10-12T08:08:28.561+02:00', bus_id: 27-14, stop_id: '41', direction: 1, terminal: false,
+                 alighted: 0, boarded: 11, passengers_after: 27, left_behind: 0, leg_minutes: null}
+              - {time: '2026-10-12T08:12:04.120+02:00', bus_id: 27-03, stop_id: '5602', direction: 0, terminal: true,
+                 alighted: 38, boarded: 0, passengers_after: 0, left_behind: 0, leg_minutes: 41.5}
+
+  schemas:
+    LineState:
+      type: object
+      additionalProperties: false
+      required: [time, line_id, buses, waiting]
+      properties:
+        time:
+          type: string
+          format: date-time
+          description: Simulated time of the snapshot (ISO 8601, Europe/Madrid offset).
+        line_id:
+          type: string
+          description: Line id, same as in the topic.
+        buses:
+          type: array
+          description: Every bus of the line (up to 25).
+          items:
+            $ref: '#/components/schemas/Bus'
+        waiting:
+          type: object
+          description: |
+            People waiting at each stop of the line, keyed by stop id; stops with nobody waiting are omitted.
+            Counts include people waiting for other lines that share the stop.
+          additionalProperties:
+            type: integer
+            minimum: 1
+    Bus:
+      type: object
+      additionalProperties: false
+      required: [id, direction, lat, lon, passengers, load, state, next_stop_id]
+      properties:
+        id:
+          type: string
+          description: Bus id, `{line_id}-{nn}`.
+          examples: [27-01]
+        direction:
+          type: integer
+          enum: [0, 1]
+          description: 0 outbound, 1 inbound.
+        lat:
+          type: number
+          description: Latitude, WGS84 degrees (5 decimals, about 1 m).
+        lon:
+          type: number
+          description: Longitude, WGS84 degrees (5 decimals, about 1 m).
+        passengers:
+          type: integer
+          minimum: 0
+          description: People on board.
+        load:
+          type: number
+          minimum: 0
+          description: passengers / capacity (3 decimals). Can exceed 1 if a bus is overloaded.
+        state:
+          type: string
+          enum: [driving, dwelling]
+          description: '`dwelling`: stopped at a stop or laying over at a terminal.'
+        next_stop_id:
+          type: string
+          description: Stop the bus is heading to (or dwelling at).
+    LineCalls:
+      type: object
+      additionalProperties: false
+      required: [time, line_id, calls]
+      properties:
+        time:
+          type: string
+          format: date-time
+          description: Simulated time at the end of the tick.
+        line_id:
+          type: string
+        calls:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/StopCall'
+    StopCall:
+      type: object
+      additionalProperties: false
+      required: [time, bus_id, stop_id, direction, terminal, alighted, boarded, passengers_after, left_behind,
+                 leg_minutes]
+      properties:
+        time:
+          type: string
+          format: date-time
+          description: When the bus reached the stop (millisecond precision).
+        bus_id:
+          type: string
+        stop_id:
+          type: string
+          description: EMT Madrid stop id, as in `data/lines.yaml`.
+        direction:
+          type: integer
+          enum: [0, 1]
+          description: Leg the bus is on or has just finished (at a terminal).
+        terminal:
+          type: boolean
+          description: End of a leg; everyone alights and the bus lays over for at least 2 minutes.
+        alighted:
+          type: integer
+          minimum: 0
+          description: People who got off.
+        boarded:
+          type: integer
+          minimum: 0
+          description: People who got on.
+        passengers_after:
+          type: integer
+          minimum: 0
+          description: People on board when the bus leaves.
+        left_behind:
+          type: integer
+          minimum: 0
+          description: People who could not board because the bus was full.
+        leg_minutes:
+          type: [number, 'null']
+          description: At a terminal, duration of the leg just finished in minutes (1 decimal); otherwise null.
