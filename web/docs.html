@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Madrid Bus API</title>
+<meta name="description" content="HTTP API, MCP server and real-time MQTT feed of the Madrid bus simulator">
+<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui.css">
+<link rel="stylesheet" href="https://unpkg.com/@asyncapi/react-component@1.4.10/styles/default.min.css">
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1d2330; --muted: #5b6475; --line: #e3e6ec; --accent: #0178bc; --tab-bg: #f3f5f8;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151b; --fg: #e6e9ef; --muted: #9aa3b2; --line: #2a303b; --accent: #4fb3f0; --tab-bg: #1b2029;
+    }
+    /* Swagger UI and the AsyncAPI component only ship a light theme: invert them. */
+    :root:not([data-theme="light"]) .themed { filter: invert(0.9) hue-rotate(180deg); }
+    :root:not([data-theme="light"]) .themed img { filter: invert(1) hue-rotate(180deg); }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151b; --fg: #e6e9ef; --muted: #9aa3b2; --line: #2a303b; --accent: #4fb3f0; --tab-bg: #1b2029;
+  }
+  :root[data-theme="dark"] .themed { filter: invert(0.9) hue-rotate(180deg); }
+  :root[data-theme="dark"] .themed img { filter: invert(1) hue-rotate(180deg); }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body { font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow-x: hidden; }
+  header { max-width: 1200px; margin: 0 auto; padding: 20px 16px 0; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  header p { margin: 0 0 12px; color: var(--muted); }
+  header a { color: var(--accent); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
+  nav { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+  nav button {
+    font: inherit; color: var(--muted); background: none; border: 1px solid transparent; border-bottom: none;
+    border-radius: 8px 8px 0 0; padding: 8px 14px; cursor: pointer; margin-bottom: -1px;
+  }
+  nav button[aria-selected="true"] { color: var(--fg); background: var(--tab-bg); border-color: var(--line); }
+  main { max-width: 1200px; margin: 0 auto; padding: 0 16px 40px; }
+  section[hidden] { display: none; }
+  .themed { background: #fff; border-radius: 0 0 8px 8px; }
+  .swagger-ui .topbar { display: none; }
+  .swagger-ui .wrapper { padding: 0 12px; }
+  #asyncapi { padding: 8px 0; }
+  .hint { color: var(--muted); font-size: .9rem; margin: 12px 0; }
+  @media (max-width: 600px) {
+    .swagger-ui .wrapper { padding: 0 4px; }
+    .swagger-ui .opblock .opblock-summary { flex-wrap: wrap; }
+    .swagger-ui .opblock .opblock-summary-path { max-width: 100%; word-break: break-all; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Madrid Bus Simulator API</h1>
+  <p>Live and historical data of the simulated EMT Madrid network. Send your group key as
+    <code>x-api-key</code>. AI agents: the same data is an MCP server at <code>&lt;api_url&gt;/mcp</code>.
+    <a href="./">Back to the map</a></p>
+  <nav role="tablist">
+    <button role="tab" id="tab-rest" aria-controls="rest" aria-selected="true">HTTP API (OpenAPI)</button>
+    <button role="tab" id="tab-mqtt" aria-controls="mqtt" aria-selected="false">Real-time feed (AsyncAPI)</button>
+  </nav>
+</header>
+<main>
+  <section id="rest" role="tabpanel" aria-labelledby="tab-rest">
+    <p class="hint">Choose the API server, click <b>Authorize</b> and paste your key to try the requests here.</p>
+    <div id="swagger" class="themed"></div>
+  </section>
+  <section id="mqtt" role="tabpanel" aria-labelledby="tab-mqtt" hidden>
+    <div id="asyncapi" class="themed"></div>
+  </section>
+</main>
+<script src="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"></script>
+<script src="https://unpkg.com/@asyncapi/react-component@1.4.10/browser/standalone/index.js"></script>
+<script>
+  // The spec ships placeholder hosts; on the deployed site, "try it out" goes to the real ones.
+  const placeholders = { "https://example.lambda-url.eu-west-1.on.aws": null, "https://example.cloudfront.net": location.origin };
+  fetch("live/config.json").then(r => r.ok ? r.json() : {}).catch(() => ({})).then(cfg => {
+    placeholders["https://example.lambda-url.eu-west-1.on.aws"] = cfg.apiUrl || null;
+    SwaggerUIBundle({
+      url: "docs/openapi.yaml",
+      dom_id: "#swagger",
+      deepLinking: true,
+      persistAuthorization: true,
+      defaultModelsExpandDepth: 0,
+      docExpansion: "list",
+      requestInterceptor: req => {
+        for (const [from, to] of Object.entries(placeholders)) {
+          if (to && req.url.startsWith(from)) req.url = to + req.url.slice(from.length);
+        }
+        return req;
+      },
+    });
+  });
+
+  let asyncRendered = false;
+  function renderAsyncApi() {
+    if (asyncRendered) return;
+    asyncRendered = true;
+    AsyncApiStandalone.render({
+      schema: { url: "docs/asyncapi.yaml", options: { method: "GET", mode: "cors" } },
+      config: { show: { sidebar: false, errors: true } },
+    }, document.getElementById("asyncapi"));
+  }
+
+  const tabs = { rest: document.getElementById("tab-rest"), mqtt: document.getElementById("tab-mqtt") };
+  function show(name) {
+    for (const [id, tab] of Object.entries(tabs)) {
+      tab.setAttribute("aria-selected", String(id === name));
+      document.getElementById(id).hidden = id !== name;
+    }
+    if (name === "mqtt") renderAsyncApi();
+  }
+  tabs.rest.addEventListener("click", () => { history.replaceState(null, "", "#rest"); show("rest"); });
+  tabs.mqtt.addEventListener("click", () => { history.replaceState(null, "", "#mqtt"); show("mqtt"); });
+  if (location.hash === "#mqtt") show("mqtt");
+</script>
+</body>
+</html>

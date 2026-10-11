@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "madrid-bus": {
+      "type": "http",
+      "url": "https://<function-url-id>.lambda-url.eu-west-1.on.aws/mcp",
+      "headers": {
+        "x-api-key": "<your group key>"
+      }
+    }
+  }
+}

@@ -1,0 +1,881 @@
+openapi: 3.1.0
+info:
+  title: Madrid Bus Simulator API
+  version: 1.0.0
+  summary: Live and historical data of a simulated EMT Madrid bus network.
+  description: |
+    A real-time simulation of 40 real EMT Madrid bus lines (1,723 real stops, ~700 buses).
+    This API serves the static network, the live state (refreshed every 5 s) and the history
+    of the simulation: years of hourly aggregates per line and per stop, and the raw stop calls
+    and bus positions of the last days.
+
+    **Authentication.** Every route except `/v1/health` needs your group key, sent as
+    `x-api-key: <key>` or `Authorization: Bearer <key>`. Missing or wrong keys get a `401`.
+
+    **Conventions.**
+    - Times are Madrid local time (Europe/Madrid) without offset, as in the dataset.
+    - Line ids and stop codes are strings (`"27"`, `"C1"`, `"86"`).
+    - `direction`: `0` outbound (first terminus to second), `1` inbound. Circular lines only have `0`.
+    - `load` = passengers / nominal bus capacity; it can exceed 1 (crowded bus).
+    - Query results (history and SQL) are tabular: `columns`, `types` and `rows` (arrays of values),
+      compact enough for tens of thousands of rows. Responses are limited to 6 MB (`413` beyond).
+    - Errors: `{"error": {"code": "...", "message": "..."}}`.
+
+    **AI agents.** The same data is available as an MCP server at `POST /mcp`
+    (see `docs/api/mcp.md` in the repository).
+
+    The simulation is learning material: the data is synthetic, generated from the real network
+    and a daily demand profile.
+  license:
+    name: MIT
+servers:
+  - url: "{api_url}"
+    description: API (Lambda function URL). `terraform output api_url`.
+    variables:
+      api_url:
+        default: https://example.lambda-url.eu-west-1.on.aws
+        description: Value of `terraform output api_url`, without trailing slash.
+  - url: "{site_url}"
+    description: Public site (CloudFront), no key. Only the static files and the live snapshot.
+    variables:
+      site_url:
+        default: https://example.cloudfront.net
+        description: Value of `terraform output site_url`, without trailing slash.
+security:
+  - apiKey: []
+  - bearer: []
+tags:
+  - name: Network
+    description: Lines and stops (static).
+  - name: Live
+    description: State of the simulation now, refreshed every 5 s.
+  - name: History
+    description: Athena queries on the historical dataset. Typically 1-5 s per query.
+  - name: Datasets
+    description: Table schemas, SQL access and bulk Parquet downloads.
+  - name: Public files
+    description: Served by CloudFront from the site, no key, cached (5 s for the snapshot).
+  - name: MCP
+    description: Model Context Protocol server for AI agents.
+
+paths:
+  /v1/health:
+    get:
+      tags: [Network]
+      operationId: health
+      summary: Health check (no key)
+      security: []
+      responses:
+        "200":
+          description: The API is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, time]
+                properties:
+                  status: {type: string, const: ok}
+                  time: {type: string, format: date-time, description: Server time (UTC)}
+
+  /v1/lines:
+    get:
+      tags: [Network]
+      operationId: listLines
+      summary: List lines
+      responses:
+        "200":
+          description: Every simulated line.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [lines]
+                properties:
+                  lines:
+                    type: array
+                    items: {$ref: "#/components/schemas/LineSummary"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+
+  /v1/lines/{line_id}:
+    get:
+      tags: [Network]
+      operationId: getLine
+      summary: Get a line with its ordered stops
+      parameters:
+        - $ref: "#/components/parameters/LineId"
+        - name: include_path
+          in: query
+          description: Include the street geometry (`path`).
+          schema: {type: boolean, default: true}
+      responses:
+        "200":
+          description: The line.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Line"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /v1/stops:
+    get:
+      tags: [Network]
+      operationId: listStops
+      summary: List stops
+      parameters:
+        - name: line
+          in: query
+          description: Only the stops of this line, in route order (outbound then inbound).
+          schema: {type: string, example: "27"}
+      responses:
+        "200":
+          description: Stops.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stops]
+                properties:
+                  stops:
+                    type: array
+                    items: {$ref: "#/components/schemas/Stop"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /v1/stops/{stop_id}:
+    get:
+      tags: [Network]
+      operationId: getStop
+      summary: Get a stop and the lines serving it
+      parameters:
+        - $ref: "#/components/parameters/StopId"
+      responses:
+        "200":
+          description: The stop.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/StopDetail"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /v1/live/buses:
+    get:
+      tags: [Live]
+      operationId: liveBuses
+      summary: Every bus in service now
+      parameters:
+        - name: line
+          in: query
+          description: Only the buses of this line.
+          schema: {type: string, example: "27"}
+      responses:
+        "200":
+          description: Buses.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [time, count, buses]
+                properties:
+                  time: {$ref: "#/components/schemas/SnapshotTime"}
+                  count: {type: integer, example: 25}
+                  buses:
+                    type: array
+                    items: {$ref: "#/components/schemas/LiveBus"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/Unavailable"}
+
+  /v1/live/lines/{line_id}:
+    get:
+      tags: [Live]
+      operationId: liveLine
+      summary: Live state of a line
+      description: Its buses and the people waiting at each of its stops.
+      parameters:
+        - $ref: "#/components/parameters/LineId"
+      responses:
+        "200":
+          description: Live line.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/LiveLine"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/Unavailable"}
+
+  /v1/live/stops/{stop_id}:
+    get:
+      tags: [Live]
+      operationId: liveStop
+      summary: Live state of a stop
+      description: People waiting and the buses whose next stop it is.
+      parameters:
+        - $ref: "#/components/parameters/StopId"
+      responses:
+        "200":
+          description: Live stop.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/LiveStop"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/Unavailable"}
+
+  /v1/history/lines/{line_id}/hourly:
+    get:
+      tags: [History]
+      operationId: lineHourly
+      summary: Hourly aggregates of a line
+      description: |
+        Rows of table `line_hourly` (one per date, hour and direction), ordered by date, hour,
+        direction. Columns: `date, hour, line_id, direction, trips, boardings, alightings, avg_load,
+        max_load, avg_trip_minutes, avg_wait_minutes` (see `GET /v1/datasets`).
+      parameters:
+        - $ref: "#/components/parameters/LineId"
+        - $ref: "#/components/parameters/FromDate"
+        - $ref: "#/components/parameters/ToDate"
+        - name: direction
+          in: query
+          description: 0 outbound, 1 inbound. Both by default.
+          schema: {type: integer, enum: [0, 1]}
+      responses:
+        "200":
+          description: Hourly rows. Range limited to 400 days.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/QueryResult"
+                  - type: object
+                    properties:
+                      line_id: {type: string, example: "27"}
+                      from: {type: string, format: date}
+                      to: {type: string, format: date}
+              example:
+                line_id: "27"
+                from: "2026-10-01"
+                to: "2026-10-01"
+                columns: [date, hour, line_id, direction, trips, boardings, alightings, avg_load, max_load,
+                          avg_trip_minutes, avg_wait_minutes]
+                types: [date, tinyint, varchar, tinyint, integer, integer, integer, double, double, double, double]
+                rows:
+                  - ["2026-10-01", 8, "27", 0, 11, 1843, 1790, 0.62, 1.04, 47.5, 2.4]
+                row_count: 1
+                truncated: false
+                query_id: 3f1c0b8e-1111-2222-3333-444455556666
+                stats: {data_scanned_bytes: 48213, execution_ms: 912}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "413": {$ref: "#/components/responses/TooLarge"}
+        "504": {$ref: "#/components/responses/Timeout"}
+
+  /v1/history/stops/{stop_id}/hourly:
+    get:
+      tags: [History]
+      operationId: stopHourly
+      summary: Hourly aggregates of a stop
+      description: |
+        Rows of table `stop_hourly` (all lines at the stop together), ordered by date and hour.
+        Columns: `date, hour, stop_id, boardings, alightings, avg_waiting, max_waiting, bus_calls`.
+      parameters:
+        - $ref: "#/components/parameters/StopId"
+        - $ref: "#/components/parameters/FromDate"
+        - $ref: "#/components/parameters/ToDate"
+      responses:
+        "200":
+          description: Hourly rows. Range limited to 400 days.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/QueryResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "413": {$ref: "#/components/responses/TooLarge"}
+        "504": {$ref: "#/components/responses/Timeout"}
+
+  /v1/history/stop-calls:
+    get:
+      tags: [History]
+      operationId: stopCalls
+      summary: Raw bus calls at stops
+      description: |
+        Rows of table `stop_calls`, one per bus call at a stop, ordered by time. Only the last days
+        are kept. Columns: `ts, bus_id, line_id, direction, stop_id, terminal, alighted, boarded,
+        passengers_after, left_behind` (`left_behind` = people still waiting because the bus was full).
+      parameters:
+        - $ref: "#/components/parameters/FromDate"
+        - name: to
+          in: query
+          description: Last day (inclusive), at most 7 days after `from`. Defaults to `from`.
+          schema: {type: string, format: date, example: "2026-10-10"}
+        - name: line
+          in: query
+          schema: {type: string, example: "27"}
+        - name: stop
+          in: query
+          schema: {type: string, example: "86"}
+        - name: bus
+          in: query
+          description: Bus id `<line>-<n>`.
+          schema: {type: string, example: "27-3"}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 50000, default: 10000}
+      responses:
+        "200":
+          description: Stop calls.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/QueryResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "413": {$ref: "#/components/responses/TooLarge"}
+        "504": {$ref: "#/components/responses/Timeout"}
+
+  /v1/history/positions:
+    get:
+      tags: [History]
+      operationId: busPositions
+      summary: Positions of one bus
+      description: |
+        Rows of table `bus_positions` for a bus (one every 30 s), ordered by time. Last days only.
+        Columns: `ts, bus_id, line_id, direction, lat, lon, passengers, state, next_stop_id`.
+      parameters:
+        - name: bus
+          in: query
+          required: true
+          schema: {type: string, example: "27-3"}
+        - name: from
+          in: query
+          required: true
+          description: Start, ISO 8601 date-time. Without offset it is Madrid local time.
+          schema: {type: string, format: date-time, example: "2026-10-10T07:00:00"}
+        - name: to
+          in: query
+          required: true
+          description: End, at most 1 day after `from`.
+          schema: {type: string, format: date-time, example: "2026-10-10T10:00:00"}
+      responses:
+        "200":
+          description: Positions.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/QueryResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "504": {$ref: "#/components/responses/Timeout"}
+
+  /v1/sql:
+    post:
+      tags: [Datasets]
+      operationId: runSql
+      summary: Run a read-only SQL query
+      description: |
+        One Athena (Trino SQL) `SELECT` or `WITH` statement on the history database (tables
+        `line_hourly`, `stop_hourly`, `stop_calls`, `bus_positions`; see `GET /v1/datasets`).
+        DDL/DML keywords and `;` are rejected; a `LIMIT` of at most 10000 is enforced.
+
+        **Filter partitions**: `WHERE month = '2026-09'` or `month BETWEEN '2026-01' AND '2026-06'`
+        on the hourly tables, `WHERE dt = '2026-10-10'` on `stop_calls`/`bus_positions`. Partition
+        columns are strings. Without them every file is scanned (slow, and the workgroup stops
+        queries over 2 GiB scanned). Queries taking more than 50 s are cancelled (`504`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: {type: string, maxLength: 20000}
+            example:
+              query: >-
+                SELECT hour, round(avg(avg_load), 3) AS load FROM line_hourly
+                WHERE month BETWEEN '2026-01' AND '2026-06' AND line_id = '27'
+                GROUP BY hour ORDER BY hour
+      responses:
+        "200":
+          description: Query result.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/QueryResult"
+                  - type: object
+                    properties:
+                      query: {type: string, description: The query actually run (comments removed, LIMIT enforced).}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "413": {$ref: "#/components/responses/TooLarge"}
+        "504": {$ref: "#/components/responses/Timeout"}
+
+  /v1/datasets:
+    get:
+      tags: [Datasets]
+      operationId: datasets
+      summary: Tables, columns and available partitions
+      responses:
+        "200":
+          description: Dataset description.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Datasets"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+
+  /v1/datasets/{table}/files:
+    get:
+      tags: [Datasets]
+      operationId: datasetFiles
+      summary: Download links for Parquet files
+      description: |
+        Presigned GET URLs (valid 1 hour, no key needed to download) for the Parquet files of the
+        partitions in the range, at most 500 per call. Read them with pandas, polars or DuckDB.
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema: {type: string, enum: [line_hourly, stop_hourly, stop_calls, bus_positions]}
+        - $ref: "#/components/parameters/FromDate"
+        - name: to
+          in: query
+          description: Last day (inclusive). Defaults to `from`. Monthly tables include whole months.
+          schema: {type: string, format: date}
+      responses:
+        "200":
+          description: Files.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Files"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /mcp:
+    post:
+      tags: [MCP]
+      operationId: mcp
+      summary: MCP server (Streamable HTTP, JSON-RPC 2.0)
+      description: |
+        Model Context Protocol endpoint for AI agents: stateless, JSON responses (no SSE),
+        protocol versions `2025-06-18` and `2025-03-26`. Tools mirror the REST routes. Same key as
+        the REST API. `GET /mcp` returns `405` (no server-initiated stream). Notifications get `202`.
+        See `docs/api/mcp.md` in the repository for client setup and the tools.
+      parameters:
+        - name: mcp-protocol-version
+          in: header
+          schema: {type: string, enum: ["2025-06-18", "2025-03-26"]}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: A JSON-RPC 2.0 request or notification.
+              required: [jsonrpc, method]
+              properties:
+                jsonrpc: {type: string, const: "2.0"}
+                id: {type: [integer, string]}
+                method: {type: string, example: tools/call}
+                params: {type: object}
+            example:
+              jsonrpc: "2.0"
+              id: 1
+              method: tools/call
+              params: {name: live_line, arguments: {line_id: "27"}}
+      responses:
+        "200":
+          description: JSON-RPC response.
+          content:
+            application/json:
+              schema: {type: object}
+        "202": {description: Notification accepted (no body).}
+        "400": {description: Not JSON or unsupported protocol version (JSON-RPC error body).}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+
+  /live/snapshot.json:
+    get:
+      tags: [Public files]
+      operationId: snapshot
+      summary: Live snapshot (public, no key)
+      description: Every bus and the people waiting at each stop, rewritten every 5 s. Served by CloudFront.
+      servers:
+        - url: "{site_url}"
+          variables:
+            site_url: {default: https://example.cloudfront.net}
+      security: []
+      responses:
+        "200":
+          description: Snapshot.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Snapshot"}
+
+  /live/config.json:
+    get:
+      tags: [Public files]
+      operationId: siteConfig
+      summary: Map configuration (public, no key)
+      servers:
+        - url: "{site_url}"
+          variables:
+            site_url: {default: https://example.cloudfront.net}
+      security: []
+      responses:
+        "200":
+          description: Region and Amazon Location map key (restricted to the site's domain).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  region: {type: string, example: eu-west-1}
+                  mapKey: {type: [string, "null"]}
+
+  /network.json:
+    get:
+      tags: [Public files]
+      operationId: network
+      summary: Static network (public, no key)
+      description: Every line (with street geometry) and stop, as used by the map.
+      servers:
+        - url: "{site_url}"
+          variables:
+            site_url: {default: https://example.cloudfront.net}
+      security: []
+      responses:
+        "200":
+          description: Network.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Network"}
+
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: Your group key.
+    bearer:
+      type: http
+      scheme: bearer
+      description: The same group key as a bearer token.
+
+  parameters:
+    LineId:
+      name: line_id
+      in: path
+      required: true
+      description: EMT line id.
+      schema: {type: string, example: "27"}
+    StopId:
+      name: stop_id
+      in: path
+      required: true
+      description: EMT stop code (a string).
+      schema: {type: string, example: "86"}
+    FromDate:
+      name: from
+      in: query
+      required: true
+      description: First day (inclusive), YYYY-MM-DD.
+      schema: {type: string, format: date, example: "2026-10-01"}
+    ToDate:
+      name: to
+      in: query
+      description: Last day (inclusive), at most 400 days after `from`. Defaults to `from`.
+      schema: {type: string, format: date, example: "2026-10-07"}
+
+  responses:
+    BadRequest:
+      description: Invalid parameter, invalid SQL or failed query.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+          example: {error: {code: bad_request, message: the range is limited to 400 days}}
+    Unauthorized:
+      description: Missing or invalid key.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+          example: {error: {code: unauthorized, message: "missing or invalid key: send x-api-key or Authorization: Bearer"}}
+    NotFound:
+      description: Unknown line, stop, table or route.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+          example: {error: {code: not_found, message: line 999 does not exist (GET /v1/lines lists them)}}
+    TooLarge:
+      description: Response over 6 MB (or SQL text over 20000 characters). Narrow the range or use Parquet files.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Timeout:
+      description: The Athena query took more than 50 s and was cancelled.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Unavailable:
+      description: The live snapshot is not available (simulator starting).
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [bad_request, unauthorized, not_found, method_not_allowed, too_large, timeout, query_failed,
+                     invalid_sql, unavailable, internal]
+            message: {type: string}
+
+    LineSummary:
+      type: object
+      properties:
+        id: {type: string, example: "27"}
+        name: {type: string, description: "Terminus - terminus", example: Glorieta de Embajadores - Plaza de Castilla}
+        color: {type: string, description: Official line colour, example: "#0178bc"}
+        capacity: {type: integer, description: Nominal passengers per bus, example: 90}
+        buses: {type: integer, description: Fleet size of the line, example: 25}
+        stops_outbound: {type: integer, example: 27}
+        stops_inbound: {type: integer, example: 27}
+        circular: {type: boolean, description: Single-leg line (no inbound direction), example: false}
+
+    StopRef:
+      type: object
+      properties:
+        id: {type: string, example: "86"}
+        name: {type: string, example: Embajadores}
+        lat: {type: number, description: Latitude (WGS84), example: 40.40539}
+        lon: {type: number, description: Longitude (WGS84), example: -3.70242}
+
+    Line:
+      type: object
+      properties:
+        id: {type: string, example: "27"}
+        name: {type: string, example: Glorieta de Embajadores - Plaza de Castilla}
+        color: {type: string, example: "#0178bc"}
+        capacity: {type: integer, example: 90}
+        buses: {type: integer, example: 25}
+        circular: {type: boolean}
+        outbound:
+          type: array
+          description: Stops of direction 0, in order.
+          items: {$ref: "#/components/schemas/StopRef"}
+        inbound:
+          type: array
+          description: Stops of direction 1, in order (empty for circular lines).
+          items: {$ref: "#/components/schemas/StopRef"}
+        path:
+          type: array
+          description: Street geometry of the whole circuit as [lon, lat] pairs.
+          items: {type: array, items: {type: number}, minItems: 2, maxItems: 2}
+          example: [[-3.70242, 40.40539], [-3.70112, 40.40701]]
+
+    Stop:
+      allOf:
+        - $ref: "#/components/schemas/StopRef"
+        - type: object
+          properties:
+            lines: {type: array, items: {type: string}, example: ["27", "C1"]}
+
+    StopDetail:
+      allOf:
+        - $ref: "#/components/schemas/StopRef"
+        - type: object
+          properties:
+            lines:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: {type: string, example: "27"}
+                  name: {type: string}
+                  color: {type: string}
+                  directions: {type: array, items: {type: integer, enum: [0, 1]}, example: [0]}
+
+    SnapshotTime:
+      type: string
+      format: date-time
+      description: Simulation time of the snapshot (Madrid, with offset).
+      example: "2026-10-11T08:00:05+02:00"
+
+    Bus:
+      type: object
+      required: [id, line, lat, lon, passengers, direction]
+      properties:
+        id: {type: string, description: "Bus id <line>-<n>", example: "27-3"}
+        line: {type: string, example: "27"}
+        lat: {type: number, example: 40.41234}
+        lon: {type: number, example: -3.69321}
+        passengers: {type: integer, description: Passengers on board, example: 54}
+        direction: {type: integer, enum: [0, 1]}
+        next_stop_id: {type: string, description: Next stop the bus will call at (when published by the simulator), example: "85"}
+
+    LiveBus:
+      allOf:
+        - $ref: "#/components/schemas/Bus"
+        - type: object
+          properties:
+            load: {type: [number, "null"], description: passengers / capacity, example: 0.6}
+
+    LiveLine:
+      type: object
+      properties:
+        time: {$ref: "#/components/schemas/SnapshotTime"}
+        line_id: {type: string, example: "27"}
+        name: {type: string}
+        capacity: {type: integer, example: 90}
+        buses_in_service: {type: integer, example: 25}
+        passengers: {type: integer, description: Passengers on board of all its buses}
+        waiting: {type: integer, description: People waiting at its stops (all lines at those stops)}
+        buses: {type: array, items: {$ref: "#/components/schemas/LiveBus"}}
+        stops:
+          type: object
+          properties:
+            outbound: {type: array, items: {$ref: "#/components/schemas/LiveStopRef"}}
+            inbound: {type: array, items: {$ref: "#/components/schemas/LiveStopRef"}}
+
+    LiveStopRef:
+      allOf:
+        - $ref: "#/components/schemas/StopRef"
+        - type: object
+          properties:
+            waiting: {type: integer, description: People waiting now (all lines), example: 12}
+
+    LiveStop:
+      allOf:
+        - $ref: "#/components/schemas/StopRef"
+        - type: object
+          properties:
+            time: {$ref: "#/components/schemas/SnapshotTime"}
+            lines: {type: array, items: {type: string}}
+            waiting: {type: integer, example: 12}
+            approaching:
+              type: array
+              description: Buses whose next stop is this one.
+              items: {$ref: "#/components/schemas/LiveBus"}
+
+    QueryResult:
+      type: object
+      description: Tabular result of an Athena query.
+      required: [columns, types, rows, row_count, truncated]
+      properties:
+        columns: {type: array, items: {type: string}, example: [date, hour, boardings]}
+        types:
+          type: array
+          description: Athena type of each column. Integers and doubles are JSON numbers, booleans JSON booleans,
+            dates `YYYY-MM-DD` strings, timestamps `YYYY-MM-DD HH:MM:SS.mmm` strings (Madrid local time).
+          items: {type: string}
+          example: [date, tinyint, integer]
+        rows:
+          type: array
+          items: {type: array, items: {}}
+          example: [["2026-10-01", 8, 1843]]
+        row_count: {type: integer}
+        truncated: {type: boolean, description: More rows than returned}
+        query_id: {type: string}
+        stats:
+          type: object
+          properties:
+            data_scanned_bytes: {type: [integer, "null"]}
+            execution_ms: {type: [integer, "null"]}
+
+    Datasets:
+      type: object
+      properties:
+        database: {type: string, example: madrid_bus_history}
+        tables:
+          type: array
+          items:
+            type: object
+            properties:
+              name: {type: string, example: line_hourly}
+              description: {type: string}
+              partition_key: {type: string, enum: [month, dt]}
+              partition_format: {type: string, enum: [YYYY-MM, YYYY-MM-DD]}
+              partitions:
+                type: object
+                properties:
+                  count: {type: integer}
+                  first: {type: [string, "null"], example: "2023-10"}
+                  last: {type: [string, "null"], example: "2026-10"}
+                  values: {type: array, items: {type: string}}
+              columns:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: {type: string, example: avg_load}
+                    type: {type: string, example: double}
+                    description: {type: string, example: Mean passengers / nominal capacity over buses in service (can exceed 1)}
+        sql_notes: {type: array, items: {type: string}}
+        sql_examples: {type: array, items: {type: string}}
+
+    Files:
+      type: object
+      properties:
+        table: {type: string}
+        from: {type: string, format: date}
+        to: {type: string, format: date}
+        expires_in: {type: integer, description: Seconds the URLs stay valid, example: 3600}
+        count: {type: integer}
+        truncated: {type: boolean, description: More than 500 files in the range; ask again from a later date}
+        files:
+          type: array
+          items:
+            type: object
+            properties:
+              key: {type: string, example: history/line_hourly/month=2026-09/part-0000.parquet}
+              partition: {type: string, example: "2026-09"}
+              size: {type: integer, description: Bytes}
+              last_modified: {type: string, format: date-time}
+              url: {type: string, format: uri, description: Presigned GET URL}
+
+    Snapshot:
+      type: object
+      properties:
+        time: {$ref: "#/components/schemas/SnapshotTime"}
+        buses: {type: array, items: {$ref: "#/components/schemas/Bus"}}
+        waiting:
+          type: object
+          description: People waiting per stop code (stops with nobody waiting are omitted).
+          additionalProperties: {type: integer}
+          example: {"86": 5, "85": 2}
+
+    Network:
+      type: object
+      properties:
+        lines:
+          type: object
+          description: Lines by id.
+          additionalProperties:
+            type: object
+            properties:
+              name: {type: string}
+              color: {type: string}
+              capacity: {type: integer}
+              buses: {type: integer}
+              outbound: {type: array, items: {type: string}, description: Stop codes of direction 0}
+              inbound: {type: array, items: {type: string}, description: Stop codes of direction 1}
+              path: {type: array, items: {type: array, items: {type: number}}, description: "[lon, lat] pairs"}
+        stops:
+          type: object
+          description: Stops by code.
+          additionalProperties:
+            type: object
+            properties:
+              name: {type: string}
+              lat: {type: number}
+              lon: {type: number}
+              lines: {type: array, items: {type: string}}
