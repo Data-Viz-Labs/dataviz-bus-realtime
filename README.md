@@ -1,426 +1,172 @@
 # Madrid Bus Real-Time Simulator
 
-⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️
+> ⚠️ **Learning material, not production software.**
 
-⚠️ WARNING!!! LEARNING MATERIAL NOT SUITABLE FOR PRODUCTION ⚠️
- 
-⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️
+A live simulation of 40 real EMT Madrid bus lines: buses run their real routes, people arrive at
+the real stops following the daily demand profile, board, ride and get off. It runs on AWS
+(Fargate + Amazon Location + S3/CloudFront) and is shown on a web map.
 
-A cloud-native system that generates and serves temporally consistent simulated data for Madrid Centro's EMT bus system.
+![Live map](docs/screenshot.png)
 
-## Overview
+- **Real network**: 40 lines, 1,723 stops and 712 buses taken from the official EMT Madrid GTFS
+  feed (fleet size from peak headways, cruising speed from timetabled run times).
+- **One consistent world**: a single process owns every bus and every stop queue, so the person
+  who arrives at a stop is the person a bus later picks up. Passenger totals always balance.
+- **Amazon Location Service**: street geometry from the Routes API, base map from the Maps API,
+  bus positions and 30-day history in a Tracker, optional per-stop Geofences.
+- **Runs locally without AWS**: `make run` and `make preview`.
 
-The Madrid Bus Real-Time Simulator is designed for hackathons and educational purposes, providing realistic bus operation data through REST and WebSocket APIs. The system continuously generates data for bus positions, passenger counts, and sensor readings, storing it in AWS Timestream for historical queries.
-
-## Key Features
-
-- **Real-time bus positions**: Track buses along their routes with GPS coordinates
-- **Bidirectional routes**: Buses travel outbound and return on inbound routes with automatic direction changes at terminals
-- **Passenger counts**: Monitor people waiting at stops and riding on buses
-- **Sensor data**: Temperature, humidity, CO2 levels, and door status
-- **Historical queries**: Access up to 30 days of historical data
-- **WebSocket streaming**: Real-time position updates for subscribed bus lines
-- **Daily patterns**: Realistic passenger flow based on time of day
-- **Temporal consistency**: Coordinated updates across all data types
-
-## Architecture
-
-### High-Level Overview
-
-The system follows a producer-consumer pattern with three main layers:
-
-1. **Data Generation Layer (Fargate)**: Three feeder services continuously generate realistic bus operation data
-2. **Event & Storage Layer**: AWS Timestream stores time series data, EventBridge handles real-time events
-3. **API Layer (Lambda + API Gateway)**: REST and WebSocket APIs serve data to clients
-
-### Key Components
-
-**API Gateway:**
-- REST API with API key authentication for historical/latest queries
-- WebSocket API with custom authorizer for real-time updates
-
-**Lambda Functions:**
-- People Count API: Query passenger counts at bus stops
-- Sensors API: Query temperature, humidity, CO2, door status
-- Bus Position API: Query bus locations and passenger counts
-- WebSocket Handler: Manage real-time subscriptions and broadcasts
-- WebSocket Authorizer: Validate API keys for WebSocket connections
-
-**MCP Server (ECS Fargate):**
-- Programmatic access to Timestream data via Model Context Protocol
-- Deployed on ECS in private subnets with API Gateway HTTP API access
-- Five tools for querying people count, sensors, bus positions, and time ranges
-- Authentication via x-api-key and x-group-name headers (same as REST APIs)
-- CloudWatch Logs at `/ecs/mcp-server`
-
-**Fargate Services:**
-- People Count Feeder: Generates passenger arrival/departure data
-- Sensors Feeder: Generates environmental sensor readings
-- Bus Position Feeder: Simulates bus movement along routes
-
-**Storage:**
-- Timestream: Time series database (24h memory + 30d magnetic)
-- DynamoDB: WebSocket connection tracking
-- S3: Configuration storage (lines.yaml)
-
-**Event Processing:**
-- EventBridge: Routes real-time bus position events to WebSocket clients
-
-### Bidirectional Route System
-
-The simulator implements realistic bidirectional bus routes:
-
-- **Outbound (Direction = 0)**: Buses travel from first stop to last stop
-- **Terminal Stop Behavior**: When reaching a terminal stop:
-  - All passengers alight (get off)
-  - New passengers board
-  - Direction toggles (0 → 1 or 1 → 0)
-  - Position resets to 0.0 for return journey
-- **Inbound (Direction = 1)**: Buses travel the return route back to origin
-- **Direction Consistency**: Direction value remains constant between terminal stops
-
-## Prerequisites
-
-- AWS Account with appropriate permissions
-- Terraform >= 1.0
-- Podman (for building container images)
-- Python 3.11+
-- AWS CLI configured
-
-## Quick Start
-
-### 1. Clone the Repository
+## Quick start (local, no AWS)
 
 ```bash
-git clone <repository-url>
-cd dataviz-bus-realtime
+make venv          # Python 3.12 virtualenv with dev dependencies
+make test          # lint + 54 tests (~15 s)
+make run           # simulate 2 h from 07:30 and print a health summary
+make preview       # map at http://localhost:8000 (SPEEDUP=60 to fast-forward)
 ```
 
-### 2. Build Container Images
+`make run` prints something like:
+
+```
+simulated ticks     : 1440 (until 09:30)
+mean occupancy      : 28%
+arrived / boarded   : 166618 / 163494
+alighted / on board : 153756 / 9738
+waiting now / max   : 3124 / 7191
+unvisited stops     : none
+status              : OK
+```
+
+Without an Amazon Location key the preview uses MapLibre's demo tiles.
+
+## How the simulation works
+
+`sim/` is a small discrete-time traffic simulator, in the spirit of SUMO but limited to buses
+and passengers. It has no AWS dependencies.
+
+| Module | Responsibility |
+|---|---|
+| `network.py` | Each line is a **closed circuit** (outbound leg + inbound leg) measured in metres. Stops are *visits* at fixed offsets; a terminal visit ends one leg and starts the next. Circular lines have a single leg. |
+| `engine.py` | `World.step(dt)`: Poisson arrivals into one queue per (stop, line, direction), then every bus spends `dt` driving, dwelling or laying over, calling at as many stops as it reaches. At a stop, riders alight (probability 1 / stops left in the leg; everyone at a terminal), then board up to capacity. Dwell time grows with boardings and alightings; terminals have a 2 min layover. |
+| `demand.py` | Time-of-day multipliers (rush hours 06–09 and 18–21) and Poisson sampling. |
+| `config.py` | Loads `data/lines.yaml` and, when present, `data/network.json` street geometry. |
+| `aws.py` / `service.py` | The Fargate service: real-time loop, S3 snapshot, Amazon Location tracker, stop geofences, state for restarts. |
+| `preview.py` | Local web server with an in-process simulation. |
+
+Arrival detection compares visit indices, never floating-point positions, and the time budget
+of a tick is carried across stops, so a bus never skips a stop or stalls at a terminal.
+
+### Data
+
+`data/lines.yaml` is generated from the EMT Madrid GTFS feed by `tools/import_gtfs.py`
+(see its docstring for the formulas). Shared stops are shared between lines; a stop's arrival
+rate is split between the line/direction queues that serve it. `demand_scale` is calibrated so
+that the rush-hour mean occupancy is about 30 %.
 
 ```bash
-make build-feeders
+make import-gtfs                 # download the feed and rebuild data/lines.yaml
+make import-gtfs LINES=27,C1,5   # pick other lines
+make network                     # snap every line to streets (Amazon Location Routes)
 ```
 
-### 3. Deploy Infrastructure
+`make network` calls `geo-routes:CalculateRoutes` once per 24 stops of each direction (about
+140 requests, Core pricing) and writes `data/network.json`. Without that file buses run
+straight from stop to stop.
+
+Source data: [EMT Madrid GTFS](https://servicios.emtmadrid.es:8443/gtfs/transitemt.zip),
+open data from EMT Madrid (Empresa Municipal de Transportes de Madrid), reused under its
+[terms of use](https://mobilitylabs.emtmadrid.es/sip/terms-of-use).
+
+## Architecture on AWS
+
+```mermaid
+flowchart LR
+  subgraph Fargate
+    S[simulator<br/>sim.service]
+  end
+  S -- every 5 s --> L[(S3 live/snapshot.json)]
+  S -- tracked lines --> T[Amazon Location<br/>Tracker]
+  T -. optional .-> G[Geofence collection<br/>one per stop]
+  G -. ENTER/EXIT .-> E[EventBridge] --> CW[CloudWatch Logs]
+  S -- every 60 s --> ST[(S3 state/world.json)]
+  CF[CloudFront] --> L
+  CF --> W[(S3 index.html<br/>network.json)]
+  B[Browser<br/>MapLibre] --> CF
+  B -- tiles --> M[Amazon Location<br/>Maps v2]
+```
+
+- **Simulator** (`terraform/simulator.tf`): one Fargate task (ARM64, 0.5 vCPU). It resumes from
+  `state/world.json` after a restart if the state is less than 15 minutes old.
+- **Map** (`terraform/site.tf`, `web/index.html`): a static page polling
+  `live/snapshot.json` every 5 s through CloudFront and animating the buses between polls.
+  The bucket is private; CloudFront reads only `index.html`, `network.json` and `live/*`.
+- **Amazon Location** (`terraform/location.tf`): an API key restricted to map tiles and to the
+  CloudFront domain, a tracker for the buses of `tracked_lines`, and optional stop geofences.
+
+### Deploy
+
+Requirements: Terraform ≥ 1.5, Docker with buildx, AWS credentials.
 
 ```bash
-# Initialize Terraform
-make init
-
-# Review deployment plan
-make plan
-
-# Deploy (builds images, pushes to ECR, applies Terraform, loads config)
-make deploy AWS_REGION=eu-west-1
+make plan                        # review
+make deploy                      # create ECR, build and push the image, apply, print the map URL
+make smoke                       # check the live snapshot has moving, loaded buses
+make logs                        # simulator logs
+make destroy
 ```
 
-### 4. Get API Endpoints
+Terraform variables (`terraform/variables.tf`):
 
-```bash
-cd terraform
-terraform output http_api_endpoint
-terraform output websocket_api_endpoint
-terraform output mcp_api_endpoint
-```
+| Variable | Default | Meaning |
+|---|---|---|
+| `aws_region` | `eu-west-1` | Must offer Amazon Location Maps/Routes v2 |
+| `lines` | `""` | Subset of lines to simulate (empty = all 40) |
+| `tracked_lines` | `"27"` | Lines written to the Amazon Location tracker: ids, `all` or `""` |
+| `heartbeat_seconds` | `120` | Seconds between two tracker writes of a bus |
+| `stop_geofences` | `false` | Per-stop geofences + stop-call writes, ENTER/EXIT events in CloudWatch Logs |
+| `monthly_budget_limit` / `budget_alert_emails` | `100` / `[]` | AWS Budgets alert |
 
-### 5. Test the APIs
+The simulator itself reads its settings from environment variables, documented at the top of
+`sim/service.py`.
 
-```bash
-# Get API key
-API_KEY=$(aws secretsmanager get-secret-value \
-  --secret-id bus-simulator/api-key \
-  --query SecretString --output text | jq -r '.api_key')
+### Cost
 
-# Get latest people count at stop S001
-curl -H "x-api-key: $API_KEY" \
-     -H "x-group-name: test-group" \
-     "$(terraform output -raw http_api_endpoint)/people-count/S001?mode=latest"
+Amazon Location bills every tracker write and every geofence evaluation, so the full fleet is
+**not** sent to the tracker by default. The map gets every bus from the S3 snapshot instead.
+Estimates use eu-west-1 list prices after the free tier:
 
-# Get latest bus position
-curl -H "x-api-key: $API_KEY" \
-     -H "x-group-name: test-group" \
-     "$(terraform output -raw http_api_endpoint)/bus-position/B001?mode=latest"
-```
+| Item | Monthly |
+|---|---|
+| Fargate, 0.5 vCPU / 1 GB ARM, always on | ≈ $14 |
+| S3 snapshot (every 5 s) + state | ≈ $3 |
+| Tracker, line 27 (25 buses, heartbeat 120 s, ≈ 0.54 M writes) | ≈ $26 |
+| Map tiles | $0.04 per 1,000 tiles |
+| **Default total** | **≈ $45 + viewers** |
+| Tracker for all 712 buses (heartbeat 120 s, ≈ 15 M writes) | ≈ $440 |
+| All 712 buses with stop geofences (≈ 33 M writes + evaluations) | ≈ $3,200 |
 
-## Configuration
-
-### Bus Lines Configuration
-
-Edit `data/lines.yaml` to configure bus lines, stops, and buses:
-
-```yaml
-lines:
-  - line_id: "L1"
-    name: "Plaza de Castilla - Atocha"
-    stops:
-      - stop_id: "S001"
-        name: "Plaza de Castilla"
-        latitude: 40.4657
-        longitude: -3.6886
-        is_terminal: true
-        base_arrival_rate: 2.5  # people per minute
-      - stop_id: "S002"
-        name: "Paseo de la Castellana"
-        latitude: 40.4500
-        longitude: -3.6900
-        is_terminal: false
-        base_arrival_rate: 1.8
-    buses:
-      - bus_id: "B001"
-        capacity: 80
-        initial_position: 0.0
-```
-
-After modifying the configuration, reload it:
-
-```bash
-make load-config AWS_REGION=eu-west-1
-```
-
-## API Documentation
-
-See [docs/UI.md](docs/UI.md) for complete API reference.
-
-### Quick Examples
-
-**REST API:**
-```bash
-# Latest people count
-curl -H "x-api-key: $API_KEY" -H "x-group-name: team-alpha" \
-  "{api-endpoint}/people-count/S001?mode=latest"
-
-# Historical sensor data
-curl -H "x-api-key: $API_KEY" -H "x-group-name: team-alpha" \
-  "{api-endpoint}/sensors/bus/B001?timestamp=2026-02-22T10:00:00Z"
-
-# All buses on a line
-curl -H "x-api-key: $API_KEY" -H "x-group-name: team-alpha" \
-  "{api-endpoint}/bus-position/line/L1?mode=latest"
-```
-
-**WebSocket API:**
-```javascript
-const ws = new WebSocket('wss://{websocket-endpoint}?api_key=YOUR_KEY&group_name=team-alpha');
-ws.onopen = () => {
-  ws.send(JSON.stringify({
-    action: 'subscribe',
-    line_ids: ['L1', 'L2']
-  }));
-};
-ws.onmessage = (event) => {
-  console.log('Position update:', JSON.parse(event.data));
-};
-```
-
-**MCP Server:**
-```bash
-# Get API endpoint and key
-cd terraform
-MCP_ENDPOINT=$(terraform output -raw mcp_api_endpoint)
-API_KEY=$(aws secretsmanager get-secret-value \
-  --secret-id bus-simulator/api-key \
-  --query SecretString --output text | jq -r '.api_key')
-
-# List available tools
-curl -X POST "${MCP_ENDPOINT}/mcp/list-tools" \
-  -H "x-api-key: ${API_KEY}" \
-  -H "x-group-name: your-group" \
-  -H "Content-Type: application/json"
-
-# Query people count
-curl -X POST "${MCP_ENDPOINT}/mcp/call-tool" \
-  -H "x-api-key: ${API_KEY}" \
-  -H "x-group-name: your-group" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tool": "query_people_count",
-    "arguments": {
-      "stop_id": "S001",
-      "mode": "latest"
-    }
-  }'
-```
-
-## Testing
-
-The project includes three levels of testing following the test pyramid approach:
-
-### Quick Start
-
-```bash
-# Run all tests
-make test-all
-
-# Run specific test level
-make test-unit      # Unit tests (local, no AWS)
-make test-int       # Integration tests (Python + AWS)
-make test-e2e       # End-to-end tests (API shell scripts)
-```
-
-### Test Levels
-
-**1. Unit Tests (Local, No AWS)**
-- Fast execution (< 1 minute)
-- Tests business logic, data models, utilities
-- No AWS credentials required
-- Uses mocks for external dependencies
-
-**2. Integration Tests (Python + AWS)**
-- Moderate execution (5-10 minutes)
-- Tests AWS service interactions
-- Requires AWS credentials and deployed infrastructure
-- Tests Timestream, Secrets Manager, Lambda, MCP server
-
-**3. End-to-End Tests (Shell Scripts)**
-- Complete user workflows (10-15 minutes)
-- Tests all public APIs via curl
-- Automatic configuration from Terraform outputs
-- Tests REST APIs, WebSocket, MCP server, authentication
-
-See [docs/ops_manual.md](docs/ops_manual.md) for detailed testing documentation.
-
-## Deployment Timeline
-
-For hackathon preparation:
-
-1. **Day -7**: Deploy infrastructure (`make deploy`)
-2. **Day -7 to Day -2**: Feeders run continuously, accumulating 5 days of data
-3. **Day -1**: Verify system readiness (`make verify`)
-4. **Day -1**: Export and distribute API keys (`make export-keys`)
-5. **Day 0**: Hackathon begins, system continues running
-
-### Pre-Hackathon Verification
-
-Before the hackathon, run the verification script to ensure everything is working:
-
-```bash
-# Run verification checks
-make verify AWS_REGION=eu-west-1
-
-# Run with verbose output
-make verify AWS_REGION=eu-west-1 VERBOSE=true
-```
-
-The verification script checks:
-- ✓ Timestream has at least 5 days of historical data
-- ✓ All Fargate services are running
-- ✓ REST API endpoints respond correctly
-- ✓ API key authentication is enforced
-- ✓ WebSocket connections work properly
-
-## Monitoring
-
-### CloudWatch Dashboards
-
-Monitor system health through CloudWatch:
-- Feeder service metrics (CPU, memory, task count)
-- API Gateway metrics (requests, latency, errors)
-- Lambda metrics (invocations, duration, errors)
-- Timestream metrics (write throughput, query latency)
-- MCP server metrics (CPU, memory, task count, health checks)
-
-### Logs
-
-All services log to CloudWatch Logs:
-- Lambda functions: `/aws/lambda/bus-simulator-*`
-- Fargate services: `/ecs/*-feeder`
-- MCP server: `/ecs/mcp-server`
-
-**View MCP server logs:**
-```bash
-# Tail logs in real-time
-aws logs tail /ecs/mcp-server --follow --region eu-west-1
-
-# Filter by group name
-aws logs filter-log-events \
-  --log-group-name /ecs/mcp-server \
-  --filter-pattern "your-group-name" \
-  --region eu-west-1
-```
-
-## Cost Estimation
-
-Approximate monthly costs for 7-day operation (5 days pre-hackathon + 2 days hackathon):
-
-- API Gateway: $10-20
-- Lambda: $5-10
-- Timestream: $50-100
-- Fargate (feeders): $30-50
-- Fargate (MCP server): $10-15
-- EventBridge: $5-10
-- Amazon Location: $5
-
-**Total: ~$115-210 for 7 days**
-
-**Note:** MCP server costs depend on usage. The estimate assumes moderate query load (10-50 queries/min).
-
-## Cleanup
-
-To destroy all infrastructure:
-
-```bash
-make destroy AWS_REGION=eu-west-1
-```
-
-## Project Structure
+## Development
 
 ```
-dataviz-bus-realtime/
-├── data/                    # Configuration files
-│   └── lines.yaml          # Bus lines configuration
-├── dataviz/                # Visualization examples
-│   ├── samples-001.py      # Example 1: People Count
-│   ├── samples-002.py      # Example 2: Bus Sensors
-│   ├── samples-003.py      # Example 3: Bus Positions
-│   ├── samples-004.py      # Example 4: Real-time Dashboard
-│   ├── samples-005.py      # Example 5: Sensor Comparison
-│   ├── samples-006.py      # Example 6: WebSocket
-│   └── README.md           # Examples documentation
-├── docker/                  # Dockerfiles for Fargate services
-├── docs/                    # Documentation
-│   ├── UI.md               # API documentation (REST, WebSocket, MCP)
-│   ├── ops_manual.md       # Operations manual
-│   └── deployment_manual.md # Deployment manual
-├── mcp_server/             # MCP server
-├── scripts/                 # Deployment and utility scripts
-├── src/
-│   ├── common/             # Shared utilities
-│   ├── feeders/            # Data generation services
-│   └── lambdas/            # API Lambda functions
-├── terraform/              # Infrastructure as Code
-│   └── modules/            # Terraform modules
-├── tests/                  # Unit and property tests
-├── Makefile               # Deployment automation
-└── README.md              # This file
+sim/            simulator package (engine, network, demand, AWS adapters, service, preview)
+tools/          import_gtfs.py, build_network.py, export_web.py, smoke.py
+data/           lines.yaml (from GTFS), network.json (from Amazon Location Routes)
+web/            the map (single HTML file)
+terraform/      infrastructure
+tests/          pytest suite
 ```
 
-## Contributing
+Tests are grouped by what they protect:
 
-Contributions are welcome! Please:
+- `test_invariants.py`: whole-network runs (real Madrid network and random networks via
+  Hypothesis) checking that people are never created or lost, capacity holds, terminals empty
+  the bus, every bus moves and every stop is served, and rush-hour buses carry people.
+- `test_network.py`, `test_engine.py`, `test_config.py`: edge cases such as several stops in one
+  tick, terminals at the end of the circuit, shared stops, circular lines and state round trips.
+- `test_aws.py`, `test_build_network.py`: AWS request shapes against botocore stubs.
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Submit a pull request
+CI (`.github/workflows/test.yml`) runs lint, tests and `terraform validate`.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- Built for educational and hackathon purposes
-- Uses AWS Timestream for time series data storage
-- Implements property-based testing with Hypothesis
-- Infrastructure as Code with Terraform
-
-## Support
-
-For issues or questions:
-- Open an issue on GitHub
-- Check the [API Documentation](docs/UI.md)
-- Review CloudWatch logs for debugging
-- See [Operations Manual](docs/ops_manual.md)
-- See [Deployment Manual](docs/deployment_manual.md)
+MIT, see [LICENSE](LICENSE). Bus network data © EMT Madrid.

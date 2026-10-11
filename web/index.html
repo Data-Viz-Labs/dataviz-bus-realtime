@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Madrid Bus Live</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <style>
+    :root { --bg: #fff; --fg: #1d1d1f; --muted: #6e6e73; --panel: rgba(255,255,255,.92); --border: #d2d2d7; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #111; --fg: #f2f2f2; --muted: #a1a1a6; --panel: rgba(28,28,30,.92); --border: #3a3a3c; }
+    }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+                 font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    #map { position: absolute; inset: 0; }
+    #panel { position: absolute; top: 12px; left: 12px; max-width: calc(100% - 56px); width: 280px;
+             background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+    h1 { font-size: 16px; margin: 0 0 6px; }
+    .stats { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; margin: 8px 0; }
+    .stats span:nth-child(even) { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+    .muted { color: var(--muted); font-size: 12px; }
+    select { width: 100%; margin-top: 6px; padding: 4px; background: var(--bg); color: var(--fg);
+             border: 1px solid var(--border); border-radius: 6px; }
+    .legend { display: flex; gap: 10px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <h1>Autobuses de Madrid en vivo</h1>
+  <div class="muted">Simulación sobre la red real de EMT Madrid</div>
+  <div class="stats">
+    <span>Autobuses</span><span id="s-buses">–</span>
+    <span>Viajeros a bordo</span><span id="s-pax">–</span>
+    <span>Ocupación media</span><span id="s-occ">–</span>
+    <span>Personas esperando</span><span id="s-wait">–</span>
+  </div>
+  <select id="line"><option value="">Todas las líneas</option></select>
+  <div class="legend">
+    <span><i class="dot" style="background:#2e9e5b"></i>&lt;40%</span>
+    <span><i class="dot" style="background:#e3a21a"></i>40–80%</span>
+    <span><i class="dot" style="background:#d64545"></i>&gt;80%</span>
+  </div>
+  <div class="muted" id="s-time"></div>
+</div>
+<script>
+const POLL_MS = 5000;
+const MAX_TWEEN_DEG = 0.002; // ~200 m
+const occColor = ["interpolate", ["linear"], ["get", "occ"], 0, "#2e9e5b", 0.4, "#e3a21a", 0.8, "#d64545"];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+let network, map, current = new Map(), target = new Map(), tweenStart = 0, selected = "";
+
+async function json(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error(`${url}: ${r.status}`);
+  return r.json();
+}
+
+function linesGeoJSON() {
+  return { type: "FeatureCollection", features: Object.entries(network.lines).map(([id, l]) => ({
+    type: "Feature", properties: { id, color: l.color || "#0178bc" },
+    geometry: { type: "LineString", coordinates: l.path } })) };
+}
+
+function stopsGeoJSON(waiting) {
+  return { type: "FeatureCollection", features: Object.entries(network.stops).map(([id, s]) => ({
+    type: "Feature", properties: { id, name: s.name, lines: ` ${s.lines.join(" ")} `, waiting: waiting[id] || 0 },
+    geometry: { type: "Point", coordinates: [s.lon, s.lat] } })) };
+}
+
+function busesGeoJSON(t) {
+  const features = [];
+  for (const [id, b] of target) {
+    const from = current.get(id) || b;
+    const k = Math.min(1, t);
+    features.push({ type: "Feature",
+      properties: { id, line: b.line, passengers: b.passengers, occ: b.occ },
+      geometry: { type: "Point", coordinates: [from.lon + (b.lon - from.lon) * k, from.lat + (b.lat - from.lat) * k] } });
+  }
+  return { type: "FeatureCollection", features };
+}
+
+function animate() {
+  const t = (performance.now() - tweenStart) / POLL_MS;
+  map.getSource("buses")?.setData(busesGeoJSON(t));
+  if (t < 1) requestAnimationFrame(animate);
+}
+
+async function poll() {
+  try {
+    const snap = await json("live/snapshot.json");
+    // keep the drawn position as the start of the next tween
+    const t = Math.min(1, (performance.now() - tweenStart) / POLL_MS);
+    const next = new Map();
+    for (const b of snap.buses) {
+      const cap = network.lines[b.line]?.capacity || 90;
+      next.set(b.id, { ...b, occ: b.passengers / cap });
+      const prev = target.get(b.id), from = current.get(b.id);
+      const drawn = prev && from && { lon: from.lon + (prev.lon - from.lon) * t, lat: from.lat + (prev.lat - from.lat) * t };
+      // Animate short moves only: a straight tween over a long jump would cut across blocks.
+      const near = drawn && Math.abs(drawn.lat - b.lat) + Math.abs(drawn.lon - b.lon) < MAX_TWEEN_DEG;
+      current.set(b.id, near ? drawn : b);
+    }
+    target = next;
+    tweenStart = performance.now();
+    requestAnimationFrame(animate);
+    map.getSource("stops").setData(stopsGeoJSON(snap.waiting));
+
+    const buses = snap.buses.filter(b => !selected || b.line === selected);
+    const pax = buses.reduce((n, b) => n + b.passengers, 0);
+    const cap = buses.reduce((n, b) => n + (network.lines[b.line]?.capacity || 90), 0);
+    const stops = Object.entries(network.stops).filter(([, s]) => !selected || s.lines.includes(selected));
+    document.getElementById("s-buses").textContent = buses.length.toLocaleString("es");
+    document.getElementById("s-pax").textContent = pax.toLocaleString("es");
+    document.getElementById("s-occ").textContent = cap ? `${Math.round(100 * pax / cap)}%` : "–";
+    document.getElementById("s-wait").textContent =
+      stops.reduce((n, [id]) => n + (snap.waiting[id] || 0), 0).toLocaleString("es");
+    document.getElementById("s-time").textContent = `Actualizado ${new Date(snap.time).toLocaleTimeString("es")}`;
+  } catch (e) {
+    document.getElementById("s-time").textContent = `Sin datos: ${e.message}`;
+  }
+}
+
+function applyFilter() {
+  const f = selected ? ["==", ["get", "line"], selected] : null;
+  map.setFilter("buses", f);
+  map.setFilter("lines", selected ? ["==", ["get", "id"], selected] : null);
+  map.setFilter("stops", selected ? ["in", ` ${selected} `, ["get", "lines"]] : null);
+}
+
+async function main() {
+  const [config, net] = await Promise.all([json("live/config.json"), json("network.json")]);
+  network = net;
+  const select = document.getElementById("line");
+  for (const [id, l] of Object.entries(network.lines)) select.add(new Option(`${id} · ${l.name}`, id));
+  select.onchange = () => {
+    selected = select.value;
+    applyFilter();
+    if (selected) {
+      const b = new maplibregl.LngLatBounds();
+      network.lines[selected].path.forEach(p => b.extend(p));
+      map.fitBounds(b, { padding: 60 });
+    }
+    poll();
+  };
+
+  const scheme = matchMedia("(prefers-color-scheme: dark)").matches ? "Dark" : "Light";
+  map = new maplibregl.Map({
+    container: "map", center: [-3.7038, 40.4168], zoom: 12,
+    // Amazon Location Maps v2; without a key (local preview) fall back to MapLibre's demo tiles.
+    style: config.mapKey
+      ? `https://maps.geo.${config.region}.amazonaws.com/v2/styles/Standard/descriptor?key=${config.mapKey}&color-scheme=${scheme}`
+      : "https://demotiles.maplibre.org/style.json",
+  });
+  map.addControl(new maplibregl.NavigationControl(), "top-right");
+  map.on("load", () => {
+    map.addSource("lines", { type: "geojson", data: linesGeoJSON() });
+    map.addSource("stops", { type: "geojson", data: stopsGeoJSON({}) });
+    map.addSource("buses", { type: "geojson", data: busesGeoJSON(1) });
+    map.addLayer({ id: "lines", type: "line", source: "lines",
+      paint: { "line-color": ["get", "color"], "line-width": 2, "line-opacity": 0.45 } });
+    map.addLayer({ id: "stops", type: "circle", source: "stops", minzoom: 12,
+      paint: { "circle-radius": ["interpolate", ["linear"], ["get", "waiting"], 0, 2, 30, 9],
+               "circle-color": "#6e6e73", "circle-opacity": 0.6 } });
+    map.addLayer({ id: "buses", type: "circle", source: "buses",
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 3, 15, 7],
+               "circle-color": occColor, "circle-stroke-color": "#fff", "circle-stroke-width": 1 } });
+    for (const layer of ["buses", "stops"]) {
+      map.on("click", layer, e => {
+        const p = e.features[0].properties;
+        const html = layer === "buses"
+          ? `<b>Línea ${esc(p.line)}</b> · ${esc(p.id)}<br>${p.passengers} viajeros (${Math.round(p.occ * 100)}%)`
+          : `<b>${esc(p.name)}</b><br>${p.waiting} esperando · líneas ${esc(p.lines.trim())}`;
+        new maplibregl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
+      });
+    }
+    poll();
+    setInterval(poll, POLL_MS);
+  });
+}
+
+main().catch(e => { document.getElementById("s-time").textContent = `Error: ${e.message}`; });
+</script>
+</body>
+</html>

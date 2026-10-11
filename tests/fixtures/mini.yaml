@@ -1,0 +1,36 @@
+# Three small lines covering the shapes real networks have:
+#   A: inbound is the reverse of outbound (same stop ids)
+#   B: inbound uses different stops (other side of the street) and shares stop C2 with A
+#   C: circular line (inbound: [])
+stops:
+  A1: {name: A1, lat: 40.4500, lon: -3.6900, base_arrival_rate: 1.5}
+  A2: {name: A2, lat: 40.4400, lon: -3.6900, base_arrival_rate: 1.0}
+  C2: {name: Shared, lat: 40.4300, lon: -3.6900, base_arrival_rate: 2.0}
+  A4: {name: A4, lat: 40.4200, lon: -3.6900, base_arrival_rate: 1.5}
+  B1: {name: B1, lat: 40.4300, lon: -3.7100, base_arrival_rate: 1.0}
+  B2o: {name: B2 out, lat: 40.4300, lon: -3.7000, base_arrival_rate: 0.8}
+  B2i: {name: B2 in, lat: 40.4302, lon: -3.7000, base_arrival_rate: 0.8}
+  B3: {name: B3, lat: 40.4300, lon: -3.6800, base_arrival_rate: 1.0}
+  L1: {name: L1, lat: 40.4100, lon: -3.7000, base_arrival_rate: 1.0}
+  L2: {name: L2, lat: 40.4100, lon: -3.6900, base_arrival_rate: 1.0}
+  L3: {name: L3, lat: 40.4000, lon: -3.6900, base_arrival_rate: 1.0}
+  L4: {name: L4, lat: 40.4000, lon: -3.7000, base_arrival_rate: 1.0}
+lines:
+  - line_id: "A"
+    name: A1 - A4
+    speed_kmh: 20
+    outbound: [A1, A2, C2, A4]
+    inbound: [A4, C2, A2, A1]
+    buses: {count: 3, capacity: 60}
+  - line_id: "B"
+    name: B1 - B3
+    speed_kmh: 18
+    outbound: [B1, B2o, C2, B3]
+    inbound: [B3, C2, B2i, B1]
+    buses: {count: 2, capacity: 60}
+  - line_id: "C"
+    name: Circular
+    speed_kmh: 15
+    outbound: [L1, L2, L3, L4]
+    inbound: []
+    buses: {count: 2, capacity: 40}

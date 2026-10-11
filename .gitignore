@@ -65,3 +65,7 @@ htmlcov/
 
 # Deployment
 *.zip
+.hypothesis/
+.ruff_cache/
+.cache/
+web/network.json

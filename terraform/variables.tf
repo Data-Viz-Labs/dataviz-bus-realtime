@@ -1,85 +1,80 @@
-# Variables for Madrid Bus Real-Time Simulator Terraform configuration
-
 variable "aws_region" {
-  description = "AWS region for deployment"
+  description = "Region for every resource (must offer Amazon Location Maps/Routes v2)"
   type        = string
   default     = "eu-west-1"
 }
 
-variable "timestream_database_name" {
-  description = "Name of the Timestream database"
+variable "name" {
+  description = "Prefix for resource names"
   type        = string
-  default     = "bus_simulator"
+  default     = "madrid-bus"
 }
 
-variable "participant_count" {
-  description = "Number of API keys to generate for hackathon participants"
-  type        = number
-  default     = 12
+variable "image_tag" {
+  description = "Simulator image tag in ECR"
+  type        = string
+  default     = "latest"
 }
 
-variable "create_vpc" {
-  description = "Whether to create a new VPC or use existing"
+variable "lines" {
+  description = "Comma-separated subset of line ids to simulate; empty simulates every line in data/lines.yaml"
+  type        = string
+  default     = ""
+}
+
+variable "tracked_lines" {
+  description = "Lines whose buses are written to the Amazon Location tracker: comma-separated ids, \"all\" or \"\" (none). Tracker writes are billed per position; see README"
+  type        = string
+  default     = "27"
+}
+
+variable "stop_geofences" {
+  description = "Create a geofence per stop of the tracked lines and write every stop call (ENTER/EXIT events in CloudWatch Logs). Geofence evaluations are billed per position"
   type        = bool
-  default     = true
+  default     = false
 }
 
-variable "vpc_cidr" {
-  description = "CIDR block for VPC if creating new"
-  type        = string
-  default     = "10.0.0.0/16"
-}
-
-variable "tags" {
-  description = "Common tags to apply to all resources"
-  type        = map(string)
-  default = {
-    Project     = "Madrid-Bus-Simulator"
-    Environment = "production"
-    ManagedBy   = "Terraform"
-  }
-}
-
-variable "monthly_budget_limit" {
-  description = "Monthly budget limit in USD for cost monitoring"
+variable "heartbeat_seconds" {
+  description = "Max seconds between two tracker writes of a bus"
   type        = number
-  default     = 200
+  default     = 120
 }
 
-variable "budget_alert_emails" {
-  description = "Email addresses to receive budget alert notifications"
+variable "task_cpu" {
+  description = "Fargate CPU units for the simulator"
+  type        = number
+  default     = 512
+}
+
+variable "task_memory" {
+  description = "Fargate memory (MiB) for the simulator"
+  type        = number
+  default     = 1024
+}
+
+variable "subnet_ids" {
+  description = "Public subnets for the simulator task; empty uses the default VPC"
   type        = list(string)
   default     = []
 }
 
-# MCP Server configuration
-variable "mcp_cpu" {
-  description = "CPU units for MCP server task (256 = 0.25 vCPU, 512 = 0.5 vCPU, 1024 = 1 vCPU)"
-  type        = string
-  default     = "512"
+variable "monthly_budget_limit" {
+  description = "Monthly budget in USD for alerts"
+  type        = number
+  default     = 100
 }
 
-variable "mcp_memory" {
-  description = "Memory for MCP server task in MB"
-  type        = string
-  default     = "1024"
-}
-
-variable "mcp_log_level" {
-  description = "Log level for MCP server (DEBUG, INFO, WARNING, ERROR)"
-  type        = string
-  default     = "INFO"
-}
-
-variable "mcp_cors_allowed_origins" {
-  description = "List of allowed origins for CORS on MCP API Gateway"
+variable "budget_alert_emails" {
+  description = "Emails that receive budget alerts"
   type        = list(string)
-  default     = ["*"]
+  default     = []
 }
 
-variable "enable_vpc_endpoints" {
-  description = "Whether to create VPC endpoints for private communication with AWS services (Secrets Manager, Timestream, CloudWatch Logs)"
-  type        = bool
-  default     = true
+variable "tags" {
+  description = "Tags applied to every resource"
+  type        = map(string)
+  default = {
+    Project   = "madrid-bus-simulator"
+    ManagedBy = "terraform"
+  }
 }
-

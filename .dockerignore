@@ -1,0 +1,5 @@
+*
+!pyproject.toml
+!sim/
+!data/
+sim/__pycache__
