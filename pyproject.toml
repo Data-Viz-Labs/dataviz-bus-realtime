@@ -9,8 +9,9 @@ aws = ["boto3>=1.40"]
 history = ["pyarrow>=17", "numpy>=2"]
 dev = ["pytest>=8", "hypothesis>=6.100", "ruff>=0.6", "pyarrow>=17", "numpy>=2"]
 
-[tool.setuptools]
-packages = ["sim"]
+[tool.setuptools.packages.find]
+where = ["src/container"]
+include = ["sim*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

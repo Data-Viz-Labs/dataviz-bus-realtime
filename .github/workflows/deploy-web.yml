@@ -10,7 +10,7 @@ on:
       - "web/**"
       - "data/**"
       - "docs/api/**"
-      - "tools/export_web.py"
+      - "bin/export_web.py"
       - ".github/workflows/deploy-web.yml"
   workflow_dispatch:
 
@@ -37,7 +37,7 @@ jobs:
       - name: Export web/network.json
         run: |
           pip install -e .
-          python tools/export_web.py
+          python bin/export_web.py
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -51,7 +51,7 @@ jobs:
           set -euo pipefail
           cache="public, max-age=300"
           paths=()
-          # local file, key, content type (rest of the line; matches terraform/site.tf)
+          # local file, key, content type (rest of the line; matches iac/stack/site.tf)
           while read -r src key type; do
             if [ ! -f "$src" ]; then
               echo "::warning::$src missing, not uploaded"; continue

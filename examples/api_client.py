@@ -1,6 +1,6 @@
 """Minimal client of the Madrid bus API, standard library only.
 
-    export API_URL=$(terraform -chdir=terraform output -raw api_url)
+    export API_URL=$(terraform -chdir=iac/stack output -raw api_url)
     export API_KEY=<your group key>
     python examples/api_client.py [line_id]
 

@@ -7,7 +7,7 @@ built for data hackathons. Buses run their real routes, people arrive at the rea
 ride and get off; Madrid's calendar and its events shape the demand. Participants consume it in
 real time (MQTT, web map) and as history (HTTP API, SQL, Parquet, MCP for AI agents).
 
-![Live map](docs/screenshot.png)
+![Live map](docs/img/screenshot.png)
 
 - **Real network**: 40 lines, 1,723 stops and 712 buses from the official EMT Madrid GTFS feed.
 - **One consistent world**: a single process owns every bus and every stop queue, so the person
@@ -33,7 +33,7 @@ real time (MQTT, web map) and as history (HTTP API, SQL, Parquet, MCP for AI age
 | Live snapshot `live/snapshot.json` | map, quick scripts | [docs/api/openapi.yaml](docs/api/openapi.yaml) (public server) |
 
 Participants need only their group key (`make keys`). Their guide, in Spanish, is
-[docs/participantes.md](docs/participantes.md); examples are in [examples/](examples/).
+[docs/guides/participantes.md](docs/guides/participantes.md); examples are in [examples/](examples/).
 
 ## Quick start (local, no AWS)
 
@@ -70,7 +70,7 @@ flowchart LR
   AUTH[Lambda authorizer] --- IOT
 ```
 
-### The simulator (`sim/`)
+### The simulator (`src/container/sim/`)
 
 | Module | Responsibility |
 |---|---|
@@ -106,13 +106,13 @@ stadiums, three Friday-Sunday concert runs per quarter, a four-day summer festiv
 ### Data
 
 `data/lines.yaml` is generated from the [EMT Madrid GTFS](https://servicios.emtmadrid.es:8443/gtfs/transitemt.zip)
-by `tools/import_gtfs.py` (`make import-gtfs`); `make network` snaps the lines to streets with
+by `bin/import_gtfs.py` (`make import-gtfs`); `make network` snaps the lines to streets with
 Amazon Location Routes. EMT Madrid open data, reused under its
 [terms of use](https://mobilitylabs.emtmadrid.es/sip/terms-of-use).
 
 ## Deploy and run the event
 
-See **[docs/deploy.md](docs/deploy.md)**: one-time bootstrap (Terraform state + GitHub OIDC
+See **[docs/ops/deploy.md](docs/ops/deploy.md)**: one-time bootstrap (Terraform state + GitHub OIDC
 roles), GitHub workflows (`deploy-app` for the image, `deploy-web` for the site, `infra` for
 Terraform plan/apply), and the event-day runbook:
 
@@ -146,15 +146,17 @@ the Location cost (≈ $15/day and ≈ $100/day respectively).
 ## Development
 
 ```
-sim/            simulator package
-lambdas/        api (REST + MCP), iot_authorizer
-tools/          import_gtfs, build_network, export_web, export_schemas, smoke
-data/           lines.yaml (from GTFS), network.json (from Amazon Location Routes)
-web/            map and API docs pages
-docs/           deploy runbook and API contracts (docs/api)
-terraform/      infrastructure (+ bootstrap/ for state and CI roles)
-tests/          pytest suite
-examples/       participant examples (MQTT, API, MCP)
+iac/                Terraform: stack/ (the platform), bootstrap/ (state + CI roles), modules/
+src/
+  container/        Fargate image: Dockerfile + sim package (engine, scenario, backfill, service)
+  lambda/           api/ (REST + MCP), iot-authorizer/ (MQTT group keys)
+bin/                operator and data scripts: import_gtfs, build_network, export_*, smoke
+web/                map and API docs pages (published to S3/CloudFront)
+data/               lines.yaml (from GTFS), network.json (from Amazon Location Routes)
+docs/               api/ (contracts), ops/ (deploy runbook), guides/ (participants), img/
+tests/              sim/, lambdas/, bin/, contracts/ (docs vs code)
+examples/           participant examples (MQTT, API, MCP)
+memory-bank/        project knowledge for maintainers and agents
 ```
 
 Tests guard the simulation (whole-network invariants: conservation, capacity, every stop served),

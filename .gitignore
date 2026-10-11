@@ -69,6 +69,6 @@ htmlcov/
 .ruff_cache/
 .cache/
 web/network.json
-terraform/.build/
-terraform/backend.hcl
-terraform/bootstrap/.terraform/
+iac/stack/.build/
+iac/stack/backend.hcl
+iac/bootstrap/.terraform/

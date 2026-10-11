@@ -7,9 +7,8 @@ on:
   push:
     branches: [main]
     paths:
-      - "sim/**"
+      - "src/container/**"
       - "data/**"
-      - "Dockerfile"
       - "pyproject.toml"
       - ".dockerignore"
       - ".github/workflows/deploy-app.yml"
@@ -53,9 +52,9 @@ jobs:
           REPO: ${{ vars.ECR_REPOSITORY_URL }}
         run: |
           if [ -z "$REPO" ]; then
-            echo "::error::repository variable ECR_REPOSITORY_URL is not set (see docs/deploy.md)"; exit 1
+            echo "::error::repository variable ECR_REPOSITORY_URL is not set (see docs/ops/deploy.md)"; exit 1
           fi
-          docker build -t "$REPO:$GITHUB_SHA" -t "$REPO:latest" .
+          docker build -f src/container/Dockerfile -t "$REPO:$GITHUB_SHA" -t "$REPO:latest" .
           docker push "$REPO:$GITHUB_SHA"
           docker push "$REPO:latest"
           echo "uri=$REPO:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
@@ -86,7 +85,7 @@ jobs:
 
       - name: Smoke test
         if: steps.current.outputs.desired != '0'
-        run: python tools/smoke.py "${{ vars.SITE_URL }}"
+        run: python bin/smoke.py "${{ vars.SITE_URL }}"
 
       - name: Smoke test skipped
         if: steps.current.outputs.desired == '0'

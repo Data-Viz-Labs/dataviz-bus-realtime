@@ -6,7 +6,7 @@ name: infra
 on:
   pull_request:
     paths:
-      - "terraform/**"
+      - "iac/stack/**"
       - ".github/workflows/infra.yml"
   workflow_dispatch:
     inputs:
@@ -47,7 +47,7 @@ jobs:
       - name: Export web/network.json (read by terraform)
         run: |
           pip install pyyaml
-          python tools/export_web.py
+          python bin/export_web.py
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -55,7 +55,7 @@ jobs:
           terraform_wrapper: false
 
       - name: fmt
-        run: terraform -chdir=terraform fmt -check -recursive
+        run: terraform -chdir=iac/stack fmt -check -recursive
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -64,17 +64,17 @@ jobs:
 
       - name: init
         run: |
-          cat > terraform/backend.hcl <<HCL
+          cat > iac/stack/backend.hcl <<HCL
           bucket       = "${{ vars.TF_STATE_BUCKET }}"
           key          = "madrid-bus/terraform.tfstate"
           region       = "${{ vars.AWS_REGION }}"
           use_lockfile = true
           encrypt      = true
           HCL
-          terraform -chdir=terraform init -backend-config=backend.hcl
+          terraform -chdir=iac/stack init -backend-config=backend.hcl
 
       - name: validate
-        run: terraform -chdir=terraform validate -no-color
+        run: terraform -chdir=iac/stack validate -no-color
 
       - name: plan
         id: plan
@@ -84,7 +84,7 @@ jobs:
           args=(-var "aws_region=${{ vars.AWS_REGION }}")
           if [ -n "$BUDGET_EMAILS" ]; then args+=(-var "budget_alert_emails=$BUDGET_EMAILS"); fi
           set +e
-          terraform -chdir=terraform plan -no-color -lock-timeout=5m -detailed-exitcode "${args[@]}" -out=tfplan > plan.log 2>&1
+          terraform -chdir=iac/stack plan -no-color -lock-timeout=5m -detailed-exitcode "${args[@]}" -out=tfplan > plan.log 2>&1
           code=$?
           set -e
           cat plan.log
@@ -132,7 +132,7 @@ jobs:
       - name: Export web/network.json (read by terraform)
         run: |
           pip install pyyaml
-          python tools/export_web.py
+          python bin/export_web.py
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -146,14 +146,14 @@ jobs:
 
       - name: init
         run: |
-          cat > terraform/backend.hcl <<HCL
+          cat > iac/stack/backend.hcl <<HCL
           bucket       = "${{ vars.TF_STATE_BUCKET }}"
           key          = "madrid-bus/terraform.tfstate"
           region       = "${{ vars.AWS_REGION }}"
           use_lockfile = true
           encrypt      = true
           HCL
-          terraform -chdir=terraform init -backend-config=backend.hcl
+          terraform -chdir=iac/stack init -backend-config=backend.hcl
 
       - name: apply
         env:
@@ -161,4 +161,4 @@ jobs:
         run: |
           args=(-var "aws_region=${{ vars.AWS_REGION }}")
           if [ -n "$BUDGET_EMAILS" ]; then args+=(-var "budget_alert_emails=$BUDGET_EMAILS"); fi
-          terraform -chdir=terraform apply -no-color -auto-approve -lock-timeout=5m "${args[@]}"
+          terraform -chdir=iac/stack apply -no-color -auto-approve -lock-timeout=5m "${args[@]}"

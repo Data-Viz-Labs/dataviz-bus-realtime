@@ -17,12 +17,12 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[aws,dev]"
-      - run: ruff check sim tools tests lambdas examples
-      - run: python tools/export_mcp_docs.py --check
+      - run: ruff check src bin tests examples
+      - run: python bin/export_mcp_docs.py --check
       - run: pytest
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.11.4"
-      - run: python tools/export_web.py
-      - run: terraform -chdir=terraform fmt -check -recursive
-      - run: terraform -chdir=terraform init -backend=false && terraform -chdir=terraform validate
+      - run: python bin/export_web.py
+      - run: terraform -chdir=iac/stack fmt -check -recursive
+      - run: terraform -chdir=iac/stack init -backend=false && terraform -chdir=iac/stack validate

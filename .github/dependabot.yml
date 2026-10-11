@@ -5,11 +5,11 @@ updates:
     schedule:
       interval: "weekly"
   - package-ecosystem: "docker"
-    directory: "/"
+    directory: "/src/container"
     schedule:
       interval: "weekly"
   - package-ecosystem: "terraform"
-    directories: ["/terraform", "/terraform/modules/cost-management"]
+    directories: ["/iac/stack", "/iac/bootstrap", "/iac/modules/cost-management"]
     schedule:
       interval: "weekly"
   - package-ecosystem: "github-actions"

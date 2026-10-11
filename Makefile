@@ -3,8 +3,8 @@
 AWS_REGION ?= eu-west-1
 VENV       ?= venv
 PY         := $(VENV)/bin/python
-TF         := terraform -chdir=terraform
-TFB        := terraform -chdir=terraform/bootstrap
+TF         := terraform -chdir=iac/stack
+TFB        := terraform -chdir=iac/bootstrap
 IMAGE_TAG  ?= latest
 GTFS_URL   := https://servicios.emtmadrid.es:8443/gtfs/transitemt.zip
 LINE_IDS   := $(shell grep -E '^  - line_id:' data/lines.yaml | sed -E 's/.*"(.*)"/\1/' | paste -sd, -)
@@ -26,7 +26,7 @@ help:
 	@echo "  import-gtfs     rebuild data/lines.yaml from the EMT Madrid GTFS feed"
 	@echo "  network         snap lines to streets with Amazon Location Routes -> data/network.json"
 	@echo "  web / schemas   export web/network.json / history schema + MCP tool docs"
-	@echo "AWS (see docs/deploy.md):"
+	@echo "AWS (see docs/ops/deploy.md):"
 	@echo "  bootstrap       once per account: state bucket + GitHub OIDC roles"
 	@echo "  plan / deploy   terraform plan / build + push the image and apply"
 	@echo "  backfill        generate YEARS (3) of history on Fargate"
@@ -41,7 +41,7 @@ venv:
 	python3 -m venv $(VENV) && $(VENV)/bin/pip install -q -e ".[aws,dev]"
 
 lint:
-	$(VENV)/bin/ruff check sim tools tests lambdas examples
+	$(VENV)/bin/ruff check src bin tests examples
 
 test: lint
 	$(PY) -m pytest
@@ -53,18 +53,18 @@ preview: web
 	$(PY) -m sim.preview --speedup $(or $(SPEEDUP),1)
 
 web:
-	$(PY) tools/export_web.py
+	$(PY) bin/export_web.py
 
 schemas:
-	$(PY) tools/export_schemas.py
-	$(PY) tools/export_mcp_docs.py
+	$(PY) bin/export_schemas.py
+	$(PY) bin/export_mcp_docs.py
 
 network:
-	AWS_REGION=$(AWS_REGION) $(PY) tools/build_network.py $(if $(ONLY),--only $(ONLY))
+	AWS_REGION=$(AWS_REGION) $(PY) bin/build_network.py $(if $(ONLY),--only $(ONLY))
 
 import-gtfs:
 	mkdir -p .cache && curl -sfL -o .cache/gtfs.zip $(GTFS_URL)
-	$(PY) -I tools/import_gtfs.py --gtfs .cache/gtfs.zip --out data/lines.yaml --lines $(or $(LINES),$(LINE_IDS))
+	$(PY) -I bin/import_gtfs.py --gtfs .cache/gtfs.zip --out data/lines.yaml --lines $(or $(LINES),$(LINE_IDS))
 
 backfill-local:
 	$(PY) -m sim.backfill --years $(YEARS) --out .cache/history
@@ -73,7 +73,7 @@ bootstrap:
 	$(TFB) init -input=false && $(TFB) apply -var aws_region=$(AWS_REGION)
 
 init:
-	@test -f terraform/backend.hcl || { echo "terraform/backend.hcl missing: run 'make bootstrap' first"; exit 1; }
+	@test -f iac/stack/backend.hcl || { echo "iac/stack/backend.hcl missing: run 'make bootstrap' first"; exit 1; }
 	$(TF) init -input=false -backend-config=backend.hcl
 
 plan: init web
@@ -82,7 +82,7 @@ plan: init web
 image:
 	$(eval REPO := $(shell $(TF) output -raw ecr_repository_url))
 	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(firstword $(subst /, ,$(REPO)))
-	docker buildx build --platform linux/arm64 -t $(REPO):$(IMAGE_TAG) --push .
+	docker buildx build --platform linux/arm64 -f src/container/Dockerfile -t $(REPO):$(IMAGE_TAG) --push .
 
 deploy: init web
 	$(TF) apply -input=false -auto-approve -var aws_region=$(AWS_REGION) -var image_tag=$(IMAGE_TAG) -target aws_ecr_repository.simulator
@@ -115,7 +115,7 @@ start:
 	aws ecs update-service --region $(AWS_REGION) --cluster $(CLUSTER) --service $(SERVICE) --desired-count 1 --query 'service.desiredCount'
 
 smoke:
-	$(PY) tools/smoke.py "$$($(TF) output -raw site_url)"
+	$(PY) bin/smoke.py "$$($(TF) output -raw site_url)"
 
 logs:
 	aws logs tail /ecs/madrid-bus-simulator --follow --region $(AWS_REGION)
