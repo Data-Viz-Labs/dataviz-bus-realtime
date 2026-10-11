@@ -1,0 +1,93 @@
+name: deploy-app
+
+# Builds the simulator image, rolls the ECS service onto it and smoke-tests the live site.
+# Terraform owns the infrastructure; this workflow owns the task definition revisions.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sim/**"
+      - "data/**"
+      - "Dockerfile"
+      - "pyproject.toml"
+      - ".dockerignore"
+      - ".github/workflows/deploy-app.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-app
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04-arm
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test
+        run: |
+          pip install -e ".[aws,dev]"
+          pytest
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push (native arm64)
+        id: image
+        env:
+          REPO: ${{ vars.ECR_REPOSITORY_URL }}
+        run: |
+          if [ -z "$REPO" ]; then
+            echo "::error::repository variable ECR_REPOSITORY_URL is not set (see docs/deploy.md)"; exit 1
+          fi
+          docker build -t "$REPO:$GITHUB_SHA" -t "$REPO:latest" .
+          docker push "$REPO:$GITHUB_SHA"
+          docker push "$REPO:latest"
+          echo "uri=$REPO:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Download current task definition
+        id: current
+        run: |
+          family=$(aws ecs describe-services --cluster "${{ vars.ECS_CLUSTER }}" --services "${{ vars.ECS_SERVICE }}" \
+            --query 'services[0].taskDefinition' --output text)
+          aws ecs describe-task-definition --task-definition "$family" --query taskDefinition > task-definition.json
+          desired=$(aws ecs describe-services --cluster "${{ vars.ECS_CLUSTER }}" --services "${{ vars.ECS_SERVICE }}" \
+            --query 'services[0].desiredCount' --output text)
+          echo "desired=$desired" >> "$GITHUB_OUTPUT"
+
+      - id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: simulator
+          image: ${{ steps.image.outputs.uri }}
+
+      - uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          cluster: ${{ vars.ECS_CLUSTER }}
+          service: ${{ vars.ECS_SERVICE }}
+          wait-for-service-stability: true
+
+      - name: Smoke test
+        if: steps.current.outputs.desired != '0'
+        run: python tools/smoke.py "${{ vars.SITE_URL }}"
+
+      - name: Smoke test skipped
+        if: steps.current.outputs.desired == '0'
+        run: echo "::notice::service ${{ vars.ECS_SERVICE }} is scaled to 0; new task definition registered, smoke test skipped"

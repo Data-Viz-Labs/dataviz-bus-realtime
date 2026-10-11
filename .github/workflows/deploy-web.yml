@@ -1,0 +1,77 @@
+name: deploy-web
+
+# Publishes the static site (map, API docs, network) to the site bucket and invalidates CloudFront.
+# The live/ snapshot is written by the simulator and never touched here.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "data/**"
+      - "docs/api/**"
+      - "tools/export_web.py"
+      - ".github/workflows/deploy-web.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-web
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04-arm
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Export web/network.json
+        run: |
+          pip install -e .
+          python tools/export_web.py
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Upload
+        env:
+          BUCKET: ${{ vars.SITE_BUCKET }}
+        run: |
+          set -euo pipefail
+          cache="public, max-age=300"
+          paths=()
+          # local file, key, content type (rest of the line; matches terraform/site.tf)
+          while read -r src key type; do
+            if [ ! -f "$src" ]; then
+              echo "::warning::$src missing, not uploaded"; continue
+            fi
+            aws s3 cp "$src" "s3://$BUCKET/$key" --content-type "$type" --cache-control "$cache" --no-progress
+            paths+=("/$key")
+          done <<'LIST'
+          web/index.html index.html text/html; charset=utf-8
+          web/docs.html docs.html text/html; charset=utf-8
+          web/network.json network.json application/json
+          docs/api/openapi.yaml docs/openapi.yaml application/yaml
+          docs/api/asyncapi.yaml docs/asyncapi.yaml application/yaml
+          LIST
+          paths+=("/")
+          printf '%s\n' "${paths[@]}" > invalidate.txt
+
+      - name: Invalidate CloudFront
+        run: |
+          mapfile -t paths < invalidate.txt
+          id=$(aws cloudfront create-invalidation --distribution-id "${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}" \
+            --paths "${paths[@]}" --query Invalidation.Id --output text)
+          aws cloudfront wait invalidation-completed --distribution-id "${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}" --id "$id"
+          echo "Invalidated: ${paths[*]}"

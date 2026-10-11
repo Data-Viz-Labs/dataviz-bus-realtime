@@ -1,0 +1,164 @@
+name: infra
+
+# Terraform for the AWS stack. Pull requests get a plan as a PR comment (read-only role);
+# apply only runs on demand, in the protected "production" environment (deploy role).
+
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+      - ".github/workflows/infra.yml"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "plan or apply"
+        type: choice
+        options: [plan, apply]
+        default: plan
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: infra
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request' || inputs.action == 'plan'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Export web/network.json (read by terraform)
+        run: |
+          pip install pyyaml
+          python tools/export_web.py
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.11.4"
+          terraform_wrapper: false
+
+      - name: fmt
+        run: terraform -chdir=terraform fmt -check -recursive
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: init
+        run: |
+          cat > terraform/backend.hcl <<HCL
+          bucket       = "${{ vars.TF_STATE_BUCKET }}"
+          key          = "madrid-bus/terraform.tfstate"
+          region       = "${{ vars.AWS_REGION }}"
+          use_lockfile = true
+          encrypt      = true
+          HCL
+          terraform -chdir=terraform init -backend-config=backend.hcl
+
+      - name: validate
+        run: terraform -chdir=terraform validate -no-color
+
+      - name: plan
+        id: plan
+        env:
+          BUDGET_EMAILS: ${{ vars.BUDGET_EMAILS }}
+        run: |
+          args=(-var "aws_region=${{ vars.AWS_REGION }}")
+          if [ -n "$BUDGET_EMAILS" ]; then args+=(-var "budget_alert_emails=$BUDGET_EMAILS"); fi
+          set +e
+          terraform -chdir=terraform plan -no-color -lock-timeout=5m -detailed-exitcode "${args[@]}" -out=tfplan > plan.log 2>&1
+          code=$?
+          set -e
+          cat plan.log
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          [ "$code" -ne 1 ]
+
+      - name: Comment plan on the PR
+        if: always() && github.event_name == 'pull_request' && steps.plan.outputs.exitcode != ''
+        uses: actions/github-script@v7
+        env:
+          EXITCODE: ${{ steps.plan.outputs.exitcode }}
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- terraform-plan -->';
+            const max = 60000;
+            let log = fs.readFileSync('plan.log', 'utf8');
+            const summary = (log.match(/^(Plan:.*|No changes\..*|Error:.*)$/m) || ['see the workflow log'])[0];
+            if (log.length > max) log = '... (truncated, full plan in the workflow log)\n' + log.slice(-max);
+            const status = { '0': 'no changes', '1': 'failed', '2': 'changes' }[process.env.EXITCODE] || 'unknown';
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = `${marker}\n### Terraform plan: ${status}\n\`${summary}\` ([run](${run}))\n\n` +
+              `<details><summary>Show plan</summary>\n\n\`\`\`\n${log}\n\`\`\`\n</details>`;
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: context.issue.number, per_page: 100 });
+            const mine = comments.find(c => c.user.type === 'Bot' && c.body.includes(marker));
+            if (mine) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: mine.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+            }
+
+  apply:
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Export web/network.json (read by terraform)
+        run: |
+          pip install pyyaml
+          python tools/export_web.py
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.11.4"
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: init
+        run: |
+          cat > terraform/backend.hcl <<HCL
+          bucket       = "${{ vars.TF_STATE_BUCKET }}"
+          key          = "madrid-bus/terraform.tfstate"
+          region       = "${{ vars.AWS_REGION }}"
+          use_lockfile = true
+          encrypt      = true
+          HCL
+          terraform -chdir=terraform init -backend-config=backend.hcl
+
+      - name: apply
+        env:
+          BUDGET_EMAILS: ${{ vars.BUDGET_EMAILS }}
+        run: |
+          args=(-var "aws_region=${{ vars.AWS_REGION }}")
+          if [ -n "$BUDGET_EMAILS" ]; then args+=(-var "budget_alert_emails=$BUDGET_EMAILS"); fi
+          terraform -chdir=terraform apply -no-color -auto-approve -lock-timeout=5m "${args[@]}"
