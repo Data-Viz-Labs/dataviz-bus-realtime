@@ -1,0 +1,212 @@
+{
+  "line_hourly": {
+    "partition": "month",
+    "columns": [
+      {
+        "name": "date",
+        "type": "date",
+        "comment": "Service date (local time, Europe/Madrid)"
+      },
+      {
+        "name": "hour",
+        "type": "tinyint",
+        "comment": "Hour of day 0-23 (local time)"
+      },
+      {
+        "name": "line_id",
+        "type": "string",
+        "comment": "EMT line id"
+      },
+      {
+        "name": "direction",
+        "type": "tinyint",
+        "comment": "0 outbound, 1 inbound"
+      },
+      {
+        "name": "trips",
+        "type": "int",
+        "comment": "Trips that reached the end of the leg in this hour"
+      },
+      {
+        "name": "boardings",
+        "type": "int",
+        "comment": "Passengers who boarded"
+      },
+      {
+        "name": "alightings",
+        "type": "int",
+        "comment": "Passengers who got off"
+      },
+      {
+        "name": "avg_load",
+        "type": "double",
+        "comment": "Mean passengers / nominal capacity over buses in service (can exceed 1)"
+      },
+      {
+        "name": "max_load",
+        "type": "double",
+        "comment": "Highest passengers / nominal capacity seen"
+      },
+      {
+        "name": "avg_trip_minutes",
+        "type": "double",
+        "comment": "Mean duration of the trips counted in `trips` (null if none)"
+      },
+      {
+        "name": "avg_wait_minutes",
+        "type": "double",
+        "comment": "Estimated mean wait at stops (half the observed headway)"
+      }
+    ]
+  },
+  "stop_hourly": {
+    "partition": "month",
+    "columns": [
+      {
+        "name": "date",
+        "type": "date",
+        "comment": "Service date (local time)"
+      },
+      {
+        "name": "hour",
+        "type": "tinyint",
+        "comment": "Hour of day 0-23 (local time)"
+      },
+      {
+        "name": "stop_id",
+        "type": "string",
+        "comment": "EMT stop code"
+      },
+      {
+        "name": "boardings",
+        "type": "int",
+        "comment": "Passengers who boarded at the stop, all lines"
+      },
+      {
+        "name": "alightings",
+        "type": "int",
+        "comment": "Passengers who got off at the stop, all lines"
+      },
+      {
+        "name": "avg_waiting",
+        "type": "double",
+        "comment": "Mean people waiting at the stop"
+      },
+      {
+        "name": "max_waiting",
+        "type": "int",
+        "comment": "Most people waiting at the stop"
+      },
+      {
+        "name": "bus_calls",
+        "type": "int",
+        "comment": "Bus calls at the stop"
+      }
+    ]
+  },
+  "stop_calls": {
+    "partition": "dt",
+    "columns": [
+      {
+        "name": "ts",
+        "type": "timestamp",
+        "comment": "Time the bus reached the stop (local time)"
+      },
+      {
+        "name": "bus_id",
+        "type": "string",
+        "comment": "Bus id: <line>-<n>"
+      },
+      {
+        "name": "line_id",
+        "type": "string",
+        "comment": "EMT line id"
+      },
+      {
+        "name": "direction",
+        "type": "tinyint",
+        "comment": "Leg the bus was on when arriving: 0 outbound, 1 inbound"
+      },
+      {
+        "name": "stop_id",
+        "type": "string",
+        "comment": "EMT stop code"
+      },
+      {
+        "name": "terminal",
+        "type": "boolean",
+        "comment": "End of a leg: everyone got off"
+      },
+      {
+        "name": "alighted",
+        "type": "int",
+        "comment": "Passengers who got off"
+      },
+      {
+        "name": "boarded",
+        "type": "int",
+        "comment": "Passengers who boarded"
+      },
+      {
+        "name": "passengers_after",
+        "type": "int",
+        "comment": "Passengers on board when leaving"
+      },
+      {
+        "name": "left_behind",
+        "type": "int",
+        "comment": "People still waiting for this line and direction (bus full)"
+      }
+    ]
+  },
+  "bus_positions": {
+    "partition": "dt",
+    "columns": [
+      {
+        "name": "ts",
+        "type": "timestamp",
+        "comment": "Sample time (local time)"
+      },
+      {
+        "name": "bus_id",
+        "type": "string",
+        "comment": "Bus id"
+      },
+      {
+        "name": "line_id",
+        "type": "string",
+        "comment": "EMT line id"
+      },
+      {
+        "name": "direction",
+        "type": "tinyint",
+        "comment": "0 outbound, 1 inbound"
+      },
+      {
+        "name": "lat",
+        "type": "double",
+        "comment": "Latitude (WGS84)"
+      },
+      {
+        "name": "lon",
+        "type": "double",
+        "comment": "Longitude (WGS84)"
+      },
+      {
+        "name": "passengers",
+        "type": "int",
+        "comment": "Passengers on board"
+      },
+      {
+        "name": "state",
+        "type": "string",
+        "comment": "driving or dwelling"
+      },
+      {
+        "name": "next_stop_id",
+        "type": "string",
+        "comment": "Next stop the bus will call at"
+      }
+    ]
+  }
+}

@@ -13,9 +13,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
 import random
+from typing import TYPE_CHECKING
 
 from sim.demand import binomial, poisson, time_multiplier
 from sim.network import Line, Visit
+
+if TYPE_CHECKING:
+    from sim.scenario import Factors, Scenario
 
 QueueKey = tuple[str, str, int]  # (stop_id, line_id, direction)
 
@@ -48,6 +52,7 @@ class Bus:
     state: BusState = BusState.DRIVING
     dwell_left_s: float = 0.0
     direction: int = 0
+    leg_started: datetime | None = None  # when the bus left the terminal starting its current leg
 
 
 @dataclass(frozen=True)
@@ -64,6 +69,7 @@ class StopCall:
     boarded: int
     passengers_after: int
     left_behind: int
+    leg_minutes: float | None = None  # at a terminal: duration of the leg just finished
 
 
 @dataclass(frozen=True)
@@ -98,6 +104,7 @@ class World:
     dwell: DwellModel = field(default_factory=DwellModel)
     demand_scale: float = 1.0
     queues: dict[QueueKey, int] = field(default_factory=dict)
+    conditions: "Scenario | None" = None  # calendar, events and per-line targets; None = plain daily profile
 
     def __post_init__(self):
         # Only queues a bus actually loads from: a terminus has riders for the departing leg only.
@@ -119,25 +126,40 @@ class World:
     def step(self, dt_s: float) -> TickResult:
         if dt_s <= 0:
             raise ValueError(f"dt_s must be positive, got {dt_s}")
-        arrivals = self._generate_arrivals(dt_s)
+        f = self.conditions.factors(self.clock) if self.conditions else None
+        arrivals = self._generate_arrivals(dt_s, f)
         calls: list[StopCall] = []
         for bus in self.buses.values():
-            self._advance(bus, dt_s, calls)
+            self._advance(bus, dt_s, calls, f)
         self.clock += timedelta(seconds=dt_s)
         return TickResult(self.clock, self.snapshots(), self.waiting_by_stop(), calls, arrivals)
 
-    def _generate_arrivals(self, dt_s: float) -> int:
-        factor = time_multiplier(self.clock.hour) * self.demand_scale * dt_s / 60
+    def _generate_arrivals(self, dt_s: float, f: "Factors | None") -> int:
+        if f is None:
+            factor = time_multiplier(self.clock.hour) * self.demand_scale * dt_s / 60
+        else:
+            factor = f.city * self.demand_scale * dt_s / 60
         total = 0
         for key, rate in self._queue_rate.items():
+            if f is not None:
+                stop_id, line_id, _ = key
+                if line_id in f.suspended:
+                    continue
+                rate *= f.line_demand.get(line_id, 1.0) * f.stop_demand.get(stop_id, 1.0)
             n = poisson(self.rng, rate * factor)
             self.queues[key] += n
             total += n
         return total
 
-    def _advance(self, bus: Bus, budget_s: float, calls: list[StopCall]) -> None:
+    def _advance(self, bus: Bus, budget_s: float, calls: list[StopCall], f: "Factors | None" = None) -> None:
         line = self.lines[bus.line_id]
         speed_ms = line.speed_kmh / 3.6
+        max_load = 1.0
+        if f is not None:
+            if bus.line_id in f.suspended:
+                return  # service suspended: the bus stays where it is
+            speed_ms *= max(f.line_speed.get(bus.line_id, 1.0), 0.02)
+            max_load = f.max_load.get(bus.line_id, 1.0)
         elapsed_s = 0.0
         while elapsed_s < budget_s - 1e-9:
             left_s = budget_s - elapsed_s
@@ -157,19 +179,26 @@ class World:
             elapsed_s += reach_s
             bus.offset_m = visit.offset_m
             bus.next_visit = (bus.next_visit + 1) % len(line.visits)
-            calls.append(self._call(bus, line, visit, self.clock + timedelta(seconds=elapsed_s)))
+            calls.append(self._call(bus, line, visit, self.clock + timedelta(seconds=elapsed_s), max_load))
 
-    def _call(self, bus: Bus, line: Line, visit: Visit, at: datetime) -> StopCall:
+    def _call(self, bus: Bus, line: Line, visit: Visit, at: datetime, max_load: float = 1.0) -> StopCall:
         alighted = binomial(self.rng, bus.passengers, 1 / visit.remaining_in_leg)
         bus.passengers -= alighted
         # At a terminal the bus turns round and loads riders for the next leg.
         bus.direction = visit.board_direction
         key = (visit.stop.stop_id, line.line_id, bus.direction)
-        boarded = min(self.queues[key], bus.capacity - bus.passengers)
+        # max_load > 1 lets a crowded line run with standing room beyond nominal capacity
+        boarded = max(0, min(self.queues[key], int(bus.capacity * max_load) - bus.passengers))
         self.queues[key] -= boarded
         bus.passengers += boarded
         bus.state = BusState.DWELLING
         bus.dwell_left_s = self.dwell.dwell(boarded, alighted, visit.terminal)
+        leg_minutes = None
+        if visit.terminal:
+            if bus.leg_started is not None:
+                leg_minutes = round((at - bus.leg_started).total_seconds() / 60, 2)
+            # the next leg starts when the layover ends
+            bus.leg_started = at + timedelta(seconds=bus.dwell_left_s)
         return StopCall(
             time=at,
             bus_id=bus.bus_id,
@@ -183,6 +212,7 @@ class World:
             boarded=boarded,
             passengers_after=bus.passengers,
             left_behind=self.queues[key],
+            leg_minutes=leg_minutes,
         )
 
     def snapshots(self) -> list[BusSnapshot]:
